@@ -220,7 +220,7 @@ run_claude() {
       "$timeout_cmd" "${CLAUDE_TIMEOUT}s" \
         env ENABLE_TOOL_SEARCH=true CLAUDE_CODE_ENABLE_TASKS=true \
         claude --dangerously-skip-permissions --plugin-dir ~/SourceRoot/.claude \
-        -p "$prompt" 2>&1 | tee -a "$log_file"
+        -p "$prompt" < /dev/null 2>&1 | tee -a "$log_file"
 
       local exit_code=$?
       if [[ $exit_code -eq 124 ]]; then
@@ -245,7 +245,7 @@ run_claude() {
       # No timeout available, run without
       ENABLE_TOOL_SEARCH=true CLAUDE_CODE_ENABLE_TASKS=true \
         claude --dangerously-skip-permissions --plugin-dir ~/SourceRoot/.claude \
-        -p "$prompt" 2>&1 | tee -a "$log_file"
+        -p "$prompt" < /dev/null 2>&1 | tee -a "$log_file"
       return $?
     fi
   done
