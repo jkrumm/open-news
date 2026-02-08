@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env zsh
 set -euo pipefail
 
 ################################################################################
@@ -32,7 +32,8 @@ if [[ "${1:-}" == "--verbose" ]]; then
 fi
 
 # Phase names
-declare -A PHASE_NAMES=(
+typeset -A PHASE_NAMES
+PHASE_NAMES=(
   [1]="Project Setup"
   [2]="Backend Core"
   [3]="AI Pipeline"

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env zsh
 set -euo pipefail
 
 ################################################################################
@@ -53,7 +53,8 @@ readonly FORBIDDEN_COMMANDS=(
 )
 
 # Phase definitions (from IMPLEMENTATION.md)
-declare -A PHASE_NAMES=(
+typeset -A PHASE_NAMES
+PHASE_NAMES=(
   [1]="Project Setup"
   [2]="Backend Core"
   [3]="AI Pipeline"
@@ -61,7 +62,8 @@ declare -A PHASE_NAMES=(
   [5]="Polish"
 )
 
-declare -A PHASE_TASK_RANGES=(
+typeset -A PHASE_TASK_RANGES
+PHASE_TASK_RANGES=(
   [1]="1-5"
   [2]="6-13"
   [3]="14-20"
@@ -125,14 +127,14 @@ get_current_phase() {
 # Update phase status
 update_phase_status() {
   local phase=$1
-  local status=$2
+  local phase_status=$2
   local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-  if [[ "${status}" == "in_progress" ]]; then
+  if [[ "${phase_status}" == "in_progress" ]]; then
     jq --arg phase "${phase}" --arg ts "${timestamp}" \
       '.phases[$phase].status = "in_progress" | .phases[$phase].started_at = $ts' \
       "${STATE_FILE}" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "${STATE_FILE}"
-  elif [[ "${status}" == "completed" ]]; then
+  elif [[ "${phase_status}" == "completed" ]]; then
     jq --arg phase "${phase}" --arg ts "${timestamp}" \
       '.phases[$phase].status = "completed" | .phases[$phase].completed_at = $ts' \
       "${STATE_FILE}" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "${STATE_FILE}"
@@ -143,12 +145,12 @@ update_phase_status() {
 add_task() {
   local task_id=$1
   local title=$2
-  local status=${3:-pending}
+  local task_status=${3:-pending}
 
   local task_json=$(jq -n \
     --arg id "${task_id}" \
     --arg title "${title}" \
-    --arg status "${status}" \
+    --arg status "${task_status}" \
     '{id: $id, title: $title, status: $status, attempts: 0, started_at: null, completed_at: null}')
 
   jq --argjson task "${task_json}" \
@@ -159,18 +161,18 @@ add_task() {
 # Update task status
 update_task_status() {
   local task_id=$1
-  local status=$2
+  local task_status=$2
   local timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-  if [[ "${status}" == "in_progress" ]]; then
+  if [[ "${task_status}" == "in_progress" ]]; then
     jq --arg id "${task_id}" --arg ts "${timestamp}" \
       '(.tasks[] | select(.id == $id)) |= (.status = "in_progress" | .started_at = $ts | .attempts += 1)' \
       "${STATE_FILE}" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "${STATE_FILE}"
-  elif [[ "${status}" == "completed" ]]; then
+  elif [[ "${task_status}" == "completed" ]]; then
     jq --arg id "${task_id}" --arg ts "${timestamp}" \
       '(.tasks[] | select(.id == $id)) |= (.status = "completed" | .completed_at = $ts)' \
       "${STATE_FILE}" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "${STATE_FILE}"
-  elif [[ "${status}" == "blocked" ]]; then
+  elif [[ "${task_status}" == "blocked" ]]; then
     jq --arg id "${task_id}" --arg ts "${timestamp}" \
       '(.tasks[] | select(.id == $id)) |= (.status = "blocked" | .completed_at = $ts)' \
       "${STATE_FILE}" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "${STATE_FILE}"
@@ -206,7 +208,7 @@ run_claude() {
   while [[ ${retry} -lt ${API_RETRIES} ]]; do
     log "Running Claude (attempt $((retry + 1))/${API_RETRIES})..."
 
-    if timeout ${CLAUDE_TIMEOUT} claude --fast --no-cache "${prompt}" 2>&1 | tee -a "${log_file}"; then
+    if timeout ${CLAUDE_TIMEOUT} claude -p "${prompt}" 2>&1 | tee -a "${log_file}"; then
       return 0
     else
       local exit_code=$?
