@@ -205,10 +205,16 @@ run_claude() {
   local log_file=$2
   local retry=0
 
+  # Get plugin directory
+  local plugin_dir="$(git rev-parse --show-toplevel 2>/dev/null || echo '.')/.claude"
+
   while [[ ${retry} -lt ${API_RETRIES} ]]; do
     log "Running Claude (attempt $((retry + 1))/${API_RETRIES})..."
 
-    if timeout ${CLAUDE_TIMEOUT} claude -p "${prompt}" 2>&1 | tee -a "${log_file}"; then
+    if timeout ${CLAUDE_TIMEOUT} \
+      env ENABLE_TOOL_SEARCH=true CLAUDE_CODE_ENABLE_TASKS=true \
+      claude --dangerously-skip-permissions --plugin-dir "${plugin_dir}" \
+      -p "${prompt}" 2>&1 | tee -a "${log_file}"; then
       return 0
     else
       local exit_code=$?
