@@ -11,7 +11,7 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "types": []
+    "types": ["bun"]
   },
   "references": [{ "path": "../../packages/shared" }],
   "include": ["src/**/*"],
