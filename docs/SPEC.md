@@ -120,7 +120,7 @@ function createModel() {
 }
 ```
 
-**Configuration source of truth**: ENV vars provide bootstrap values. User overrides from the Settings UI are persisted to the `settings` table in SQLite. Merge strategy: user overrides win over ENV defaults. All config validated centrally with Zod. LLM connection tested before saving (settings endpoint validates API key by making a test call).
+**Configuration source of truth (MVP)**: ENV vars are the sole config source for LLM provider/model/key. Settings UI for LLM config is deferred to post-MVP (see P1 roadmap). User preferences (profile, interests, news style, sources) live in the `settings` table. All config validated with Zod at startup.
 
 ### ADR-003: Data Sources - RSS + Tavily + Hacker News
 
@@ -144,7 +144,9 @@ function createModel() {
 
 **RSS is the backbone**: Free, reliable, user-controlled. Combined with Tavily for discovery and HN for tech community picks, this covers the MVP without paid API subscriptions.
 
-**Content extraction**: For articles where RSS only provides a snippet, use `@mozilla/readability` + `jsdom` to extract full text. Fall back to `tavily_extract` for JS-heavy sites.
+**RSS parsing**: Use `@extractus/feed-extractor` instead of `rss-parser`. It has official Bun support, ESM-first design, supports RSS/Atom/RDF/JSON feeds, and is actively maintained (last release Oct 2025). `rss-parser` has not been released in 2+ years and is CJS-only.
+
+**Content extraction**: For articles where RSS only provides a snippet, use `@mozilla/readability` + `linkedom` to extract full text. Fall back to `tavily_extract` for JS-heavy sites. `linkedom` is 90% smaller than `jsdom`, 3x faster, and proven compatible with Readability in production.
 
 ### ADR-004: Database - SQLite via bun:sqlite + Drizzle ORM
 
@@ -181,7 +183,7 @@ sqlite.run('PRAGMA foreign_keys = ON');
 
 **SSR/SSG**: Post-MVP consideration. CSR with TanStack Query caching is sufficient for MVP -- the feed updates once/day, so client-side caching is effective. Hono has SSR capabilities (`@hono/react-renderer`, HonoX) if needed later without a metaframework. Infinite scroll over days is a client-side concern (pagination API + `useInfiniteQuery`): show 3 days by default, load more on scroll.
 
-**Streaming**: Use `@ai-sdk/react`'s `useChat` hook for streaming LLM-generated articles. The Hono backend uses the AI SDK's `streamText` with `toUIMessageStreamResponse()`.
+**Streaming**: Use `@ai-sdk/react`'s `useCompletion` hook for streaming LLM-generated articles (one-shot, not conversational). The Hono backend uses Mastra's `agent.stream()` with `toDataStreamResponse()`.
 
 **Styling**: Tailwind CSS v4 (CSS-first config, no `tailwind.config.js`).
 
@@ -212,10 +214,12 @@ new Cron('0 6 * * *', { timezone: process.env.TIMEZONE ?? 'Europe/Berlin' }, asy
 
 ### ADR-007: Content Extraction - Readability + Tavily Fallback
 
-**Decision**: Use `@mozilla/readability` with `jsdom` as the primary content extraction method. Fall back to Tavily Extract for URLs that fail.
+**Decision**: Use `@mozilla/readability` with `linkedom` as the primary content extraction method. Fall back to Tavily Extract for URLs that fail.
 
 **Rationale**:
 - Readability is the industry standard (used in Firefox Reader View)
+- `linkedom` is 90% smaller than `jsdom` (~235KB vs ~20MB), 3x faster, 3x less heap usage
+- `linkedom` is proven compatible with Readability in production (used by readability-js Rust crate)
 - Free and unlimited - no API costs
 - Handles most static HTML news sites well
 - Tavily Extract handles JS-rendered content and paywalled sites as a fallback
@@ -236,6 +240,16 @@ function buildExtractorChain(config: AppConfig): ContentExtractor[] { ... }
 
 **MVP**: Ship with readability + Tavily extractors. The interface is ~30 lines of code -- same effort as hardcoding, but structured for future additions.
 
+**Extraction code**:
+```typescript
+import { parseHTML } from 'linkedom';
+import { Readability } from '@mozilla/readability';
+
+const { document } = parseHTML(html);
+const reader = new Readability(document);
+const article = reader.parse();
+```
+
 **Post-MVP**: Add Firecrawl adapter (`@mendable/firecrawl-js` SDK) for self-hosted instances. Skip Crawl4AI -- it is Python-first with no official JS SDK and an awkward async polling model.
 
 ### ADR-008: Deduplication - URL Normalization + Title Similarity
@@ -248,7 +262,7 @@ function buildExtractorChain(config: AppConfig): ContentExtractor[] { ... }
 - Catches exact republishing and syndicated links
 
 **Layer 2 - Title Similarity**:
-- Use Dice's coefficient via `string-similarity` package
+- Use Dice's coefficient via `fast-dice-coefficient` package (the `string-similarity` package is abandoned since 2021)
 - Normalize titles: lowercase, remove punctuation
 - Threshold: similarity > 0.7 = likely same story
 - Compare against articles from the last 48 hours only
@@ -259,6 +273,73 @@ function buildExtractorChain(config: AppConfig): ContentExtractor[] { ... }
 - Can be upgraded to SimHash/embeddings later if volume grows
 
 **Challenged: AI-based deduplication** -- URL normalization + Dice coefficient is instant and free. For 100 articles, pairwise comparison takes <100ms. AI dedup would require ~4,950 LLM calls (n*(n-1)/2) per day, adding 8+ minutes of latency and cost. **Post-MVP**: Use a focused AI call only for borderline pairs (similarity 0.5-0.7) as a second pass -- maybe 5-10 targeted calls/day.
+
+### ADR-009: Structured Logging - Pino + hono-pino + Logdy
+
+**Decision**: Use Pino as the single structured logging layer across the entire application. Shared logger factory in `packages/shared`, request-scoped logging via `hono-pino` middleware, Sentry bridge via official `pinoIntegration`.
+
+**Architecture**:
+
+| Layer | Tool | Purpose |
+|-------|------|---------|
+| Logger factory | `packages/shared/src/logger.ts` | Shared Pino config, `createLogger(service)` |
+| HTTP request logging | `hono-pino` middleware | requestId (UUID), responseTime, method, path, status |
+| Error bridge | `Sentry.pinoIntegration()` | Forward `error`/`fatal` Pino logs to Sentry |
+| Local dev viewing | `pino-pretty` (terminal) + Logdy (browser UI) | Human-readable exploration |
+| Production | Raw NDJSON to stdout | Docker captures via logging driver |
+
+**Shared logger factory** (`packages/shared/src/logger.ts`):
+```typescript
+import pino, { type Logger, type LoggerOptions } from 'pino';
+
+const isDev = process.env.NODE_ENV !== 'production';
+
+export function createLogger(service: string): Logger {
+  return pino({
+    level: process.env.LOG_LEVEL ?? (isDev ? 'debug' : 'info'),
+    timestamp: pino.stdTimeFunctions.isoTime,
+    transport: isDev
+      ? { target: 'pino-pretty', options: { colorize: true, translateTime: 'HH:MM:ss.l', ignore: 'pid,hostname' } }
+      : undefined,
+  }).child({ service });
+}
+
+export type { Logger } from 'pino';
+```
+
+**Hono integration** (server entry point):
+```typescript
+import { pinoLogger } from 'hono-pino';
+
+app.use(pinoLogger({
+  pino: pino({ /* shared config */ }),
+  http: { reqId: () => crypto.randomUUID(), responseTime: true },
+}));
+
+// In route handlers: c.var.logger.info('Fetching articles');
+```
+
+**Sentry bridge** (server startup, before logger init):
+```typescript
+import * as Sentry from '@sentry/bun';
+
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    integrations: [Sentry.pinoIntegration({ error: { levels: ['error', 'fatal'] } })],
+  });
+}
+```
+
+**Local dev scripts**:
+```bash
+bun run dev              # pino-pretty colored output in terminal
+bun run dev | logdy      # pipe to Logdy browser UI (localhost:8080)
+```
+
+**Why Pino**: JSON structured logging is the standard for Docker/cloud. Pino is the fastest Node/Bun logger, outputs NDJSON to stdout (what Docker expects), and has first-class Hono and Sentry integrations. `console.log` is unstructured and not queryable.
+
+**Why Logdy**: Standalone binary (`brew install logdy`), reads from stdin — no Pino transport needed. Provides a browser UI with auto-generated columns from JSON fields, faceted filtering, search. Complementary to `pino-pretty` (terminal vs browser).
 
 ---
 
@@ -274,6 +355,7 @@ open-news/
 │   │   │   ├── index.ts           # Server entry point
 │   │   │   ├── config.ts          # Environment config + validation
 │   │   │   ├── model.ts           # LLM model factory
+│   │   │   ├── logger.ts          # Pino logger instance (child of shared factory)
 │   │   │   ├── routes/
 │   │   │   │   ├── api.ts         # REST API router
 │   │   │   │   ├── auth.ts        # Auth middleware
@@ -337,10 +419,11 @@ open-news/
 │       ├── package.json
 │       └── tsconfig.json
 ├── packages/
-│   └── shared/                    # Shared types
+│   └── shared/                    # Shared types + logger
 │       ├── src/
 │       │   ├── index.ts
-│       │   └── types.ts           # API types, domain models
+│       │   ├── types.ts           # API types, domain models
+│       │   └── logger.ts          # Pino logger factory (shared config/schema)
 │       ├── package.json
 │       └── tsconfig.json
 ├── biome.json                     # Root Biome config
@@ -406,7 +489,7 @@ open-news/
        v
 ┌──────────────────────────────────────────────────┐
 │  1. FETCH (parallel)                              │
-│  ├── RSS feeds (rss-parser, all configured feeds) │
+│  ├── RSS feeds (feed-extractor, all configured)   │
 │  ├── Hacker News API (top 50 stories)             │
 │  └── Tavily Search (per configured topic)         │
 └──────────────────┬───────────────────────────────┘
@@ -558,7 +641,7 @@ export const dailyTopics = sqliteTable('daily_topics', {
 export const tags = sqliteTable('tags', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull().unique(),       // e.g. 'ai', 'typescript', 'finance'
-  color: text('color'),                        // optional hex color
+  color: text('color'),                        // optional hex color (deferred, null for MVP)
 });
 
 // ─── Topic <-> Tag (many-to-many) ─────────────────────────
@@ -608,11 +691,13 @@ AUTH_SECRET=your-secret-here  # environment variable
 **Login flow**:
 1. POST `/api/v1/auth/login` with `{ secret: "..." }`
 2. Server validates against `AUTH_SECRET`
-3. Returns HTTP-only secure cookie with session token (signed JWT or random token)
-4. All `/api/v1/*` routes require valid session cookie
+3. Returns HTTP-only secure cookie with a JWT (signed with key derived from `AUTH_SECRET`, no expiry)
+4. All `/api/v1/*` routes require valid auth
 5. GET `/api/v1/auth/check` returns 200 if authenticated, 401 if not
 
-**Dual auth**: Support both Cookie (for the web SPA) and `Authorization: Bearer <token>` header (for external API consumers). Middleware checks cookie first, falls back to header. Both authenticate against the same shared secret.
+**JWT signing key**: Derived deterministically from `AUTH_SECRET` (e.g. HMAC-SHA256 with a static salt). This ensures JWTs survive server restarts without storing state. No token expiry — single-user app, session lives forever.
+
+**Dual auth**: Support both Cookie (for the web SPA) and `Authorization: Bearer <AUTH_SECRET>` header (for external API consumers like Glance Dashboard, Obsidian daily notes). Middleware checks cookie first, falls back to bearer header (compared directly against `AUTH_SECRET`). The shared secret is the single source of truth for authentication.
 
 ### REST Endpoints
 
@@ -632,10 +717,10 @@ POST   /api/v1/sources              { name, url, type }
 PUT    /api/v1/sources/:id          { ...partial source }
 DELETE /api/v1/sources/:id
 
-# Feed (daily topics)
-GET    /api/v1/feed                 → { days: DayWithTopics[] }
-       ?cursor=2026-02-07           # pagination by date
-       &limit=7                     # days to return
+# Feed (daily topics) — cursor-based pagination required from day one
+GET    /api/v1/feed                 → { days: DayWithTopics[], nextCursor?: string }
+       ?cursor=2026-02-07           # pagination by date (exclusive, returns days before cursor)
+       &limit=3                     # days to return (default: 3)
        &tag=ai                      # optional tag filter
 
 # Tags
@@ -656,39 +741,34 @@ GET    /api/health                   → { status: 'ok', timestamp }
 
 ### SSE Streaming (Article Generation)
 
-The article generation endpoint uses Server-Sent Events:
+The article generation endpoint uses Server-Sent Events. Article generation is one-shot (not conversational), so we use `agent.stream()` with `toDataStreamResponse()` on the server and `useCompletion` on the client (not `useChat`, which is for multi-turn conversation).
 
 ```typescript
 // Server (apps/server/src/routes/article.ts)
-import { streamSSE } from 'hono/streaming';
-
 article.post('/:topicId/generate', async (c) => {
   const topicId = c.req.param('topicId');
   const topic = await getTopicWithSources(topicId);
   const settings = await getSettings();
 
   const agent = mastra.getAgent('articleGenerator');
-  const result = await agent.stream({
-    messages: [{ role: 'user', content: buildArticlePrompt(topic, settings) }],
-  });
+  const stream = await agent.stream(buildArticlePrompt(topic, settings));
 
-  // Stream using AI SDK's response format
-  return result.toUIMessageStreamResponse();
+  // toDataStreamResponse() converts Mastra stream to AI SDK-compatible Response
+  return stream.toDataStreamResponse();
 });
 ```
 
 ```typescript
 // Client (apps/web/src/routes/Article.tsx)
-import { useChat } from '@ai-sdk/react';
+import { useCompletion } from '@ai-sdk/react';
 
 function ArticlePage({ topicId }: { topicId: string }) {
-  const { messages, isLoading, reload } = useChat({
+  const { completion, isLoading, complete } = useCompletion({
     api: `/api/v1/article/${topicId}/generate`,
-    initialInput: 'generate',
   });
 
-  // Or use a simpler custom approach with fetch + ReadableStream
-  // for non-conversational streaming (see implementation notes)
+  // completion is the streamed text (markdown), rendered with streamdown
+  // complete() triggers the generation
 }
 ```
 
@@ -700,11 +780,10 @@ function ArticlePage({ topicId }: { topicId: string }) {
 
 ```typescript
 // apps/server/src/mastra/index.ts
-import { Mastra } from '@mastra/core';
+import { Mastra } from '@mastra/core/mastra';
 import { headlineAgent } from './agents/headline-agent';
 import { articleAgent } from './agents/article-agent';
 import { dailyDigestWorkflow } from './workflows/daily-digest';
-import { tavilySearchTool, tavilyExtractTool, fetchContentTool } from './tools';
 
 export const mastra = new Mastra({
   agents: {
@@ -713,11 +792,6 @@ export const mastra = new Mastra({
   },
   workflows: {
     dailyDigest: dailyDigestWorkflow,
-  },
-  tools: {
-    tavilySearch: tavilySearchTool,
-    tavilyExtract: tavilyExtractTool,
-    fetchContent: fetchContentTool,
   },
 });
 ```
@@ -733,6 +807,7 @@ import { createModel } from '../../model';
 
 export const headlineAgent = new Agent({
   id: 'headlineGenerator',
+  name: 'Headline Generator',
   model: createModel('fast'), // Uses LLM_MODEL_FAST (cheaper, for grouping/scoring)
   instructions: `You are a news curator. Given a list of articles scraped today and the user's
 profile (background, interests, preferred style), you must:
@@ -750,7 +825,13 @@ Write headlines in the user's preferred style and language.`,
 ```
 
 **Input**: Structured JSON with articles list + user preferences
-**Output**: Structured JSON with grouped topics, headlines, summaries, scores, tags
+**Output**: Structured JSON via `agent.generate()` with `structuredOutput: { schema }` option
+```typescript
+const response = await headlineAgent.generate(buildHeadlinePrompt(articles, settings), {
+  structuredOutput: { schema: headlineOutputSchema },
+});
+const topics = response.object; // typed from Zod schema
+```
 
 ### Article Agent
 
@@ -764,6 +845,7 @@ import { tavilySearchTool, tavilyExtractTool, fetchContentTool } from '../tools'
 
 export const articleAgent = new Agent({
   id: 'articleGenerator',
+  name: 'Article Generator',
   model: createModel('pro'), // Uses LLM_MODEL_PRO (higher quality, for deep-dive articles)
   tools: {
     tavilySearch: tavilySearchTool,
@@ -787,60 +869,62 @@ Always cite sources inline: [Source Name](url).`,
 });
 ```
 
+**Streaming**: `agent.stream(prompt)` returns a `MastraModelOutput` with `.textStream`, `.text`, and `.toDataStreamResponse()` for Hono routes.
+
 ### Daily Digest Workflow
+
+Uses Mastra v1 workflow API with `createWorkflow`/`createStep` and typed input/output schemas chained via `.then()`.
 
 ```typescript
 // apps/server/src/mastra/workflows/daily-digest.ts
-import { Workflow, Step } from '@mastra/core/workflows';
+import { createWorkflow, createStep } from '@mastra/core/workflows';
+import { z } from 'zod';
 
-export const dailyDigestWorkflow = new Workflow({
-  id: 'dailyDigest',
-  steps: {
-    fetchSources: new Step({
-      id: 'fetchSources',
-      execute: async ({ context }) => {
-        // Parallel fetch from all sources
-        // Returns: { articles: RawArticle[] }
-      },
-    }),
-    deduplicate: new Step({
-      id: 'deduplicate',
-      execute: async ({ context }) => {
-        // URL normalization + title similarity
-        // Returns: { uniqueArticles: RawArticle[] }
-      },
-    }),
-    extractContent: new Step({
-      id: 'extractContent',
-      execute: async ({ context }) => {
-        // Extract full text for snippet-only articles
-        // Returns: { enrichedArticles: RawArticle[] }
-      },
-    }),
-    storeArticles: new Step({
-      id: 'storeArticles',
-      execute: async ({ context }) => {
-        // Persist to SQLite
-      },
-    }),
-    generateHeadlines: new Step({
-      id: 'generateHeadlines',
-      execute: async ({ context }) => {
-        // Invoke headlineAgent with articles + settings
-        // Returns: { topics: DailyTopic[] }
-      },
-    }),
-    storeTopics: new Step({
-      id: 'storeTopics',
-      execute: async ({ context }) => {
-        // Persist topics, tags, and source links to SQLite
-      },
-    }),
+const rawArticleSchema = z.object({ title: z.string(), url: z.string(), /* ... */ });
+
+const fetchSources = createStep({
+  id: 'fetch-sources',
+  inputSchema: z.object({ date: z.string() }),
+  outputSchema: z.object({ articles: z.array(rawArticleSchema) }),
+  execute: async ({ inputData }) => {
+    // Parallel fetch from all sources (RSS, HN, Tavily)
+    return { articles: [...] };
   },
 });
+
+const deduplicate = createStep({
+  id: 'deduplicate',
+  inputSchema: z.object({ articles: z.array(rawArticleSchema) }),
+  outputSchema: z.object({ articles: z.array(rawArticleSchema) }),
+  execute: async ({ inputData }) => {
+    // URL normalization + title similarity (Dice coefficient)
+    return { articles: uniqueArticles };
+  },
+});
+
+// ... extractContent, storeArticles, generateHeadlines, storeTopics steps ...
+
+export const dailyDigestWorkflow = createWorkflow({
+  id: 'daily-digest',
+  inputSchema: z.object({ date: z.string() }),
+  outputSchema: z.object({ topicCount: z.number() }),
+})
+  .then(fetchSources)
+  .then(deduplicate)
+  .then(extractContent)
+  .then(storeArticles)
+  .then(generateHeadlines)
+  .then(storeTopics)
+  .commit();
+
+// Execution:
+// const run = await dailyDigestWorkflow.createRun();
+// const result = await run.start({ inputData: { date: '2026-02-08' } });
 ```
 
 ### Tools
+
+Mastra v1 tools use `createTool` with typed `inputSchema`/`outputSchema`. The `execute` function receives `inputData` directly (not `{ context }`).
 
 ```typescript
 // apps/server/src/mastra/tools/tavily-search.ts
@@ -848,14 +932,17 @@ import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 
 export const tavilySearchTool = createTool({
-  id: 'tavilySearch',
+  id: 'tavily-search',
   description: 'Search the web for recent articles on a specific topic',
   inputSchema: z.object({
     query: z.string().describe('Search query'),
     timeRange: z.enum(['day', 'week', 'month']).default('day'),
     maxResults: z.number().default(5),
   }),
-  execute: async ({ context }) => {
+  outputSchema: z.object({
+    results: z.array(z.object({ title: z.string(), url: z.string(), content: z.string() })),
+  }),
+  execute: async (inputData) => {
     const response = await fetch('https://api.tavily.com/search', {
       method: 'POST',
       headers: {
@@ -863,14 +950,14 @@ export const tavilySearchTool = createTool({
         'Authorization': `Bearer ${process.env.TAVILY_API_KEY}`,
       },
       body: JSON.stringify({
-        query: context.query,
+        query: inputData.query,
         search_depth: 'basic',
-        time_range: context.timeRange,
-        max_results: context.maxResults,
+        time_range: inputData.timeRange,
+        max_results: inputData.maxResults,
         include_raw_content: true,
       }),
     });
-    return response.json();
+    return { results: (await response.json()).results };
   },
 });
 ```
@@ -902,14 +989,14 @@ export const tavilySearchTool = createTool({
 - If not cached: show loading state, POST to generate, stream markdown in real-time
 - Refresh button: invalidates cache, regenerates
 - Source list at the bottom (all grouped raw articles with links)
-- Rendered markdown with `react-markdown` + `remark-gfm`
+- Rendered markdown with `streamdown` (Vercel's AI-streaming markdown renderer, drop-in replacement for `react-markdown` optimized for token-by-token rendering with built-in GFM support)
 
 **Settings (`/settings`)**
 - Profile section: name, background, interests (textarea), news style (select), language
 - Topics section: add/remove interest tags
 - Sources section: list of RSS feeds, add new, enable/disable, delete
 - Search queries section: Tavily search queries for topic discovery
-- LLM section: display current provider info (read-only, configured via ENV)
+- LLM section: display current provider info (read-only, configured via ENV — settings-driven override deferred to post-MVP P1)
 - Save button, success/error feedback
 
 ### Component Hierarchy
@@ -952,8 +1039,7 @@ App
     "react-router-dom": "^7.0.0",
     "@ai-sdk/react": "latest",
     "@tanstack/react-query": "^5.0.0",
-    "react-markdown": "latest",
-    "remark-gfm": "latest",
+    "streamdown": "latest",
     "lucide-react": "latest",
     "@sentry/react": "latest",
     "tailwindcss": "^4.0.0"
@@ -989,11 +1075,12 @@ SENTRY_DSN=               # Sentry DSN (optional, no-op if unset)
 FIRECRAWL_URL=            # Self-hosted Firecrawl URL (optional, e.g. http://localhost:3002)
 
 # Optional - General
+NODE_ENV=production       # production | development (controls pino-pretty, defaults to development)
 PORT=3000                 # Server port (default: 3000)
 DATABASE_PATH=/app/data/open-news.db  # SQLite database path
 TIMEZONE=UTC              # Timezone for cron scheduling
 CRON_SCHEDULE=0 6 * * *   # Cron expression for daily digest (default: 6am)
-LOG_LEVEL=info            # debug | info | warn | error
+LOG_LEVEL=info            # trace | debug | info | warn | error | fatal (default: debug in dev, info in prod)
 ```
 
 ### Dockerfile
@@ -1054,6 +1141,7 @@ RUN mkdir -p /app/data && chown -R bun:bun /app/data
 
 USER bun
 
+ENV NODE_ENV=production
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
@@ -1248,11 +1336,13 @@ jobs:
     "@ai-sdk/anthropic": "latest",
     "ai": "latest",
     "hono": "latest",
+    "hono-pino": "latest",
+    "pino": "latest",
     "drizzle-orm": "latest",
-    "rss-parser": "latest",
+    "@extractus/feed-extractor": "latest",
     "@mozilla/readability": "latest",
-    "jsdom": "latest",
-    "string-similarity": "latest",
+    "linkedom": "latest",
+    "fast-dice-coefficient": "latest",
     "croner": "latest",
     "zod": "latest",
     "@sentry/bun": "latest",
@@ -1260,7 +1350,7 @@ jobs:
   },
   "devDependencies": {
     "drizzle-kit": "latest",
-    "@types/jsdom": "latest",
+    "pino-pretty": "latest",
     "typescript": "latest"
   }
 }
@@ -1276,8 +1366,7 @@ jobs:
     "react-router-dom": "^7.0.0",
     "@ai-sdk/react": "latest",
     "@tanstack/react-query": "^5.0.0",
-    "react-markdown": "latest",
-    "remark-gfm": "latest",
+    "streamdown": "latest",
     "lucide-react": "latest",
     "@open-news/shared": "workspace:*"
   },
@@ -1427,9 +1516,10 @@ Features and improvements deferred from MVP scope, organized by priority. Each i
 - Reduces false positives without the cost of full pairwise AI comparison
 
 **Settings-Driven LLM Config**
-- Allow users to configure LLM model tiers (fast/pro) from the Settings UI
+- Allow users to configure LLM provider, model tiers (fast/pro), and API key from the Settings UI
 - Test LLM connection before persisting changes
 - Override ENV defaults with user preferences from SQLite
+- Merge strategy: user overrides win over ENV defaults, all config validated centrally with Zod
 
 ### P2: High Value, Medium Effort
 
@@ -1453,10 +1543,10 @@ Features and improvements deferred from MVP scope, organized by priority. Each i
 - Reddit RSS adapter (subreddit-specific feeds, no API key needed)
 - Each source implements the existing source interface, enabled via config
 
-**Infinite Scroll Pagination**
-- Feed API pagination by date cursor (`?cursor=2026-02-07&limit=3`)
-- TanStack Query `useInfiniteQuery` for seamless day-by-day loading
-- Show 3 days by default, load more on scroll
+**Infinite Scroll UX Enhancement**
+- Note: cursor-based feed API pagination is included in MVP (see §5)
+- This P2 item covers the UX polish: `useInfiniteQuery` with intersection observer for seamless day-by-day loading
+- Loading indicators, skeleton states during scroll
 
 ### P3: Medium Value, Higher Effort
 
@@ -1471,7 +1561,7 @@ Features and improvements deferred from MVP scope, organized by priority. Each i
 - Stored as static assets in `/app/data/images/`
 
 **Article Syntax Highlighting**
-- `rehype-highlight` or `shiki` integration with `react-markdown`
+- `rehype-highlight` or `shiki` integration with `streamdown`/markdown renderer
 - Code blocks in generated articles rendered with proper syntax highlighting
 
 **GenAI Diagrams in Articles**
@@ -1520,3 +1610,12 @@ Features and improvements deferred from MVP scope, organized by priority. Each i
 | 9 | Topic types | hot / normal / standalone | Single type | Better UX, one column + prompt tweak |
 | 10 | Config storage | SQLite settings table | Config file | Single source of truth, already have DB |
 | 11 | Phone-home telemetry | Never | Opt-in to author's SigNoz | OSS community trust, provide hooks not monitoring |
+| 12 | Structured logging | Pino + hono-pino | console.log, winston, bunyan | Fastest, NDJSON stdout, Hono/Sentry integration, shared schema |
+| 13 | Local log viewer | Logdy (browser UI) | pino-pretty only, Kibana | Zero config, stdin pipe, auto-columns from JSON, no infra |
+| 14 | RSS parsing | `@extractus/feed-extractor` | `rss-parser`, `feedsmith` | Official Bun support, ESM-first, actively maintained, rss-parser is stale (2+ years no release) |
+| 15 | HTML DOM (for Readability) | `linkedom` | `jsdom`, `happy-dom` | 90% smaller, 3x faster, proven Readability compat, no Bun issues |
+| 16 | String similarity | `fast-dice-coefficient` | `string-similarity`, `CmpStr` | `string-similarity` is abandoned (5 years), same Dice algorithm, maintained |
+| 17 | Streaming markdown | `streamdown` (Vercel) | `react-markdown` + `remark-gfm` | Built for AI streaming (unterminated blocks, token-by-token), GFM included, React 19 |
+| 18 | Auth token format | JWT (signed with key derived from `AUTH_SECRET`, no expiry) + Bearer `AUTH_SECRET` | Random session token, expiring JWT | JWT survives restarts (deterministic key), no expiry (single-user), raw secret as bearer (Glance, Obsidian) |
+| 19 | Article streaming hook | `useCompletion` | `useChat` | One-shot generation, not conversational — useChat adds unnecessary multi-turn state |
+| 20 | LLM config (MVP) | ENV-only | Settings UI override | Simpler for MVP, settings-driven override deferred to post-MVP P1 |
