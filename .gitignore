@@ -23,6 +23,7 @@ logs/
 
 # RALPH loop (one-shot MVP implementation)
 .ralph-logs/
+tmp/
 
 # Editor
 .vscode/
