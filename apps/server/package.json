@@ -4,9 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --hot src/index.ts"
+    "dev": "bun --hot src/index.ts",
+    "dev:logdy": "bun run dev | logdy --fallthrough"
   },
   "dependencies": {
-    "@open-news/shared": "workspace:*"
+    "@open-news/shared": "workspace:*",
+    "hono": "^4.11.9",
+    "hono-pino": "^0.10.3"
   }
 }

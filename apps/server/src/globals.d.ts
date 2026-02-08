@@ -8,3 +8,12 @@ interface Console {
   info(...args: unknown[]): void;
   debug(...args: unknown[]): void;
 }
+
+// Hono context extensions
+import type { Logger } from 'pino';
+
+declare module 'hono' {
+  interface ContextVariableMap {
+    logger: Logger;
+  }
+}
