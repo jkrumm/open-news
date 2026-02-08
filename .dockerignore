@@ -1,0 +1,56 @@
+# Git
+.git
+.gitignore
+.github
+
+# Dependencies
+node_modules
+
+# Build outputs
+dist
+.next
+.turbo
+
+# Development
+.vscode
+.idea
+.cursor
+.agents
+.claude
+.goose
+.junie
+.ralph-logs
+*.log
+
+# Testing
+coverage
+.nyc_output
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp
+temp
+*.tmp
+*.swp
+
+# Documentation (not needed in container)
+docs
+README.md
+CLAUDE.md
+IMPLEMENTATION.md
+
+# CI/CD
+.github
+
+# Database (development)
+data
+*.db
+*.db-*

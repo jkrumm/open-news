@@ -11,7 +11,13 @@
   "overrides": [
     {
       "includes": ["**/routeTree.gen.ts"],
+      "formatter": {
+        "enabled": false
+      },
       "linter": {
+        "enabled": false
+      },
+      "assist": {
         "enabled": false
       }
     },
