@@ -205,28 +205,48 @@ run_claude() {
   local log_file=$2
   local retry=0
 
+  # Detect timeout command (GNU vs BSD)
+  local timeout_cmd=""
+  if command -v gtimeout &>/dev/null; then
+    timeout_cmd="gtimeout"
+  elif command -v timeout &>/dev/null; then
+    timeout_cmd="timeout"
+  fi
+
   while [[ ${retry} -lt ${API_RETRIES} ]]; do
     log "Running Claude (attempt $((retry + 1))/${API_RETRIES})..."
 
-    if timeout ${CLAUDE_TIMEOUT} \
-      env ENABLE_TOOL_SEARCH=true CLAUDE_CODE_ENABLE_TASKS=true \
-      claude --dangerously-skip-permissions --plugin-dir ~/SourceRoot/.claude \
-      -p "${prompt}" 2>&1 | tee -a "${log_file}"; then
+    if [[ -n "$timeout_cmd" ]]; then
+      "$timeout_cmd" "${CLAUDE_TIMEOUT}s" \
+        env ENABLE_TOOL_SEARCH=true CLAUDE_CODE_ENABLE_TASKS=true \
+        claude --dangerously-skip-permissions --plugin-dir ~/SourceRoot/.claude \
+        -p "$prompt" 2>&1 | tee -a "$log_file"
+
+      local exit_code=$?
+      if [[ $exit_code -eq 124 ]]; then
+        log_error "Claude timed out after ${CLAUDE_TIMEOUT}s"
+        retry=$((retry + 1))
+        if [[ ${retry} -lt ${API_RETRIES} ]]; then
+          log_warn "Retrying in ${RETRY_DELAY}s..."
+          sleep ${RETRY_DELAY}
+        fi
+        continue
+      elif [[ $exit_code -ne 0 ]]; then
+        log_error "Claude failed with exit code ${exit_code}"
+        retry=$((retry + 1))
+        if [[ ${retry} -lt ${API_RETRIES} ]]; then
+          log_warn "Retrying in ${RETRY_DELAY}s..."
+          sleep ${RETRY_DELAY}
+        fi
+        continue
+      fi
       return 0
     else
-      local exit_code=$?
-
-      if [[ ${exit_code} -eq 124 ]]; then
-        log_error "Claude timed out after ${CLAUDE_TIMEOUT}s"
-      else
-        log_error "Claude failed with exit code ${exit_code}"
-      fi
-
-      retry=$((retry + 1))
-      if [[ ${retry} -lt ${API_RETRIES} ]]; then
-        log_warn "Retrying in ${RETRY_DELAY}s..."
-        sleep ${RETRY_DELAY}
-      fi
+      # No timeout available, run without
+      ENABLE_TOOL_SEARCH=true CLAUDE_CODE_ENABLE_TASKS=true \
+        claude --dangerously-skip-permissions --plugin-dir ~/SourceRoot/.claude \
+        -p "$prompt" 2>&1 | tee -a "$log_file"
+      return $?
     fi
   done
 
