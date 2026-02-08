@@ -40,6 +40,10 @@ OpenNews is a self-hosted, AI-powered news aggregator that delivers a personaliz
 - Reddit API integration (use Reddit RSS instead)
 - Mobile app (responsive web is sufficient)
 - Real-time notifications / push
+- Article ImageGen
+- Proper Syntax rendering in articles
+- GenAI for Articles
+- GenAI diagrams for articles
 
 ---
 
@@ -63,11 +67,26 @@ OpenNews is a self-hosted, AI-powered news aggregator that delivers a personaliz
 - Agents/workflows/tools are standard TypeScript - testable and debuggable
 - We lose Mastra's built-in admin UI (not needed for single-user)
 
+**Challenged: Hono vs Elysia** (Feb 2026)
+
+Hono wins decisively for this project:
+1. **Mastra compatibility**: Mastra has an official Hono adapter (`MastraServer`). No Elysia adapter exists or is planned. Using Elysia would require building a custom adapter.
+2. **SSE reliability**: Hono's built-in `streamSSE` is battle-tested. Elysia had a critical SSE performance bug (10x slower, issue #1369) -- fixed in v1.3.21 but still showing edge-case issues.
+3. **Ecosystem**: Hono has 9.3M weekly npm downloads, cross-runtime support (Bun/Node/Deno/CF Workers), 40+ built-in middleware. Elysia is Bun-only with 323K downloads.
+4. **SSR/SSG path**: HonoX meta-framework + `@hono/react-renderer` for future SSR needs. Elysia has nothing comparable.
+5. **Performance**: Elysia is ~1.5x faster in synthetic benchmarks (397K vs 253K req/s), but this is irrelevant -- the bottleneck is LLM API latency, not HTTP routing.
+
 ### ADR-002: LLM Provider Strategy - Provider-Agnostic via AI SDK
 
 **Decision**: Use the Vercel AI SDK's provider system for LLM abstraction. User configures their preferred provider via environment variables.
 
-**Context**: The user has access to Google Gemini, OpenAI (custom URL), Anthropic (custom URL). Other users of the open-source project will have different providers.
+**Challenged: TanStack AI vs Vercel AI SDK** (Feb 2026)
+
+TanStack AI (`@tanstack/ai` v0.3.1) is explicitly alpha with acknowledged bugs and breaking changes. Vercel AI SDK is at v6.x, production-proven. Both work identically with Hono (standard `Response` objects). The `useChat` APIs are nearly identical -- migration to TanStack AI later is cheap if it reaches v1.0. Sticking with Vercel AI SDK for stability.
+
+**Model Tiers**: Support two model tiers via environment variables. The headline agent uses the fast model (cheaper, for grouping/scoring). The article agent uses the pro model (higher quality, for deep-dive generation). Both default to `LLM_MODEL` if not explicitly configured.
+
+**Context**: The user has access to Google Gemini (custom URL), OpenAI (custom URL), Anthropic (custom URL). Other users of the open-source project will have different providers.
 
 **Configuration** (environment variables):
 ```
@@ -101,23 +120,27 @@ function createModel() {
 }
 ```
 
+**Configuration source of truth**: ENV vars provide bootstrap values. User overrides from the Settings UI are persisted to the `settings` table in SQLite. Merge strategy: user overrides win over ENV defaults. All config validated centrally with Zod. LLM connection tested before saving (settings endpoint validates API key by making a test call).
+
 ### ADR-003: Data Sources - RSS + Tavily + Hacker News
 
 **Decision**: MVP uses three source types: RSS feeds, Hacker News API, and Tavily web search. No dedicated news API subscription required.
 
 **Rationale**:
 
-| Source | Role | Cost | Why |
-|--------|------|------|-----|
-| RSS feeds | Follow specific publications | Free | User controls sources, reliable, real-time |
-| Hacker News API | Tech community signal | Free | No auth, score = quality signal, unlimited |
-| Tavily Search | Topic-based discovery | Free (1K credits/mo) | Finds articles RSS might miss |
+| Source          | Role                         | Cost                 | Why                                        |
+|-----------------|------------------------------|----------------------|--------------------------------------------|
+| RSS feeds       | Follow specific publications | Free                 | User controls sources, reliable, real-time |
+| Hacker News API | Tech community signal        | Free                 | No auth, score = quality signal, unlimited |
+| Tavily Search   | Topic-based discovery        | Free (1K credits/mo) | Finds articles RSS might miss              |
 
 **Why not dedicated News APIs?**
 - NewsAPI.org: Free tier is localhost-only, $449/mo minimum for production
 - TheNewsAPI: 3 requests/day on free tier - unusable
 - GNews: 100 req/day free but non-commercial license
 - Mediastack: 100 req/month free, no HTTPS
+
+**Post-MVP: Additional sources** (GNews, Perplexity, etc.) can be added later as optional source adapters. The source/extractor abstraction supports this without architectural changes. Not needed for MVP -- RSS + HN + Tavily covers the use case.
 
 **RSS is the backbone**: Free, reliable, user-controlled. Combined with Tavily for discovery and HN for tech community picks, this covers the MVP without paid API subscriptions.
 
@@ -155,6 +178,8 @@ sqlite.run('PRAGMA foreign_keys = ON');
 - Bun runs Vite natively (no Node.js needed)
 - Production: Hono serves `/assets/*` as static files and `/*` as SPA fallback
 - Single port, single process in production
+
+**SSR/SSG**: Post-MVP consideration. CSR with TanStack Query caching is sufficient for MVP -- the feed updates once/day, so client-side caching is effective. Hono has SSR capabilities (`@hono/react-renderer`, HonoX) if needed later without a metaframework. Infinite scroll over days is a client-side concern (pagination API + `useInfiniteQuery`): show 3 days by default, load more on scroll.
 
 **Streaming**: Use `@ai-sdk/react`'s `useChat` hook for streaming LLM-generated articles. The Hono backend uses the AI SDK's `streamText` with `toUIMessageStreamResponse()`.
 
@@ -197,6 +222,22 @@ new Cron('0 6 * * *', { timezone: process.env.TIMEZONE ?? 'Europe/Berlin' }, asy
 
 **Cost**: Tavily Extract costs 1 credit per 5 URLs. With 1,000 free credits/month, budget ~200 fallback extractions (1,000 URLs).
 
+**Pluggable Extractor Architecture**: Use a `ContentExtractor` interface with a config-driven fallback chain pattern. Each extractor implements `extract(url) → ExtractedContent | null`. The chain tries extractors in order: free/fast first, paid API last.
+
+```typescript
+interface ContentExtractor {
+  readonly name: string;
+  extract(url: string): Promise<ExtractedContent | null>;
+}
+
+// Chain order: readability (free) → firecrawl (self-hosted, optional) → tavily (paid)
+function buildExtractorChain(config: AppConfig): ContentExtractor[] { ... }
+```
+
+**MVP**: Ship with readability + Tavily extractors. The interface is ~30 lines of code -- same effort as hardcoding, but structured for future additions.
+
+**Post-MVP**: Add Firecrawl adapter (`@mendable/firecrawl-js` SDK) for self-hosted instances. Skip Crawl4AI -- it is Python-first with no official JS SDK and an awkward async polling model.
+
 ### ADR-008: Deduplication - URL Normalization + Title Similarity
 
 **Decision**: Two-layer deduplication strategy without a vector database.
@@ -216,6 +257,8 @@ new Cron('0 6 * * *', { timezone: process.env.TIMEZONE ?? 'Europe/Berlin' }, asy
 - For < 500 articles/day, O(n^2) title comparison takes < 100ms
 - Adds complexity without proportional value at MVP scale
 - Can be upgraded to SimHash/embeddings later if volume grows
+
+**Challenged: AI-based deduplication** -- URL normalization + Dice coefficient is instant and free. For 100 articles, pairwise comparison takes <100ms. AI dedup would require ~4,950 LLM calls (n*(n-1)/2) per day, adding 8+ minutes of latency and cost. **Post-MVP**: Use a focused AI call only for borderline pairs (similarity 0.5-0.7) as a second pass -- maybe 5-10 targeted calls/day.
 
 ---
 
@@ -488,7 +531,7 @@ export const rawArticles = sqliteTable('raw_articles', {
   title: text('title').notNull(),
   url: text('url').notNull(),
   urlNormalized: text('url_normalized').notNull().unique(), // for dedup
-  content: text('content'),                    // extracted full text (nullable)
+  content: text('content'),                    // extracted full text (nullable, stored in DB)
   snippet: text('snippet'),                    // short excerpt
   author: text('author'),
   score: integer('score'),                     // HN score, null for RSS
@@ -498,12 +541,15 @@ export const rawArticles = sqliteTable('raw_articles', {
 });
 
 // ─── Daily Topics (AI-grouped headlines) ──────────────────
+// Topic types: 'hot' = main stories of the day, 'normal' = regular grouped topics,
+// 'standalone' = individually interesting articles (guides, tutorials, etc.) not grouped into a topic
 export const dailyTopics = sqliteTable('daily_topics', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   date: text('date').notNull(),                // YYYY-MM-DD
+  topicType: text('topic_type').notNull().default('normal'), // 'hot' | 'normal' | 'standalone'
   headline: text('headline').notNull(),        // AI-generated headline
   summary: text('summary').notNull(),          // AI-generated summary (2-3 sentences)
-  relevanceScore: real('relevance_score').notNull().default(0), // 0-1, for sorting
+  relevanceScore: real('relevance_score').notNull().default(0), // 0-1, AI-scored based on user interests
   sourceCount: integer('source_count').notNull().default(1),
   createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
 });
@@ -531,7 +577,7 @@ export const topicSources = sqliteTable('topic_sources', {
 export const generatedArticles = sqliteTable('generated_articles', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   topicId: integer('topic_id').notNull().references(() => dailyTopics.id, { onDelete: 'cascade' }).unique(),
-  content: text('content').notNull(),          // markdown
+  content: text('content').notNull(),          // markdown (stored in DB)
   generatedAt: text('generated_at').notNull().$defaultFn(() => new Date().toISOString()),
 });
 ```
@@ -565,6 +611,8 @@ AUTH_SECRET=your-secret-here  # environment variable
 3. Returns HTTP-only secure cookie with session token (signed JWT or random token)
 4. All `/api/v1/*` routes require valid session cookie
 5. GET `/api/v1/auth/check` returns 200 if authenticated, 401 if not
+
+**Dual auth**: Support both Cookie (for the web SPA) and `Authorization: Bearer <token>` header (for external API consumers). Middleware checks cookie first, falls back to header. Both authenticate against the same shared secret.
 
 ### REST Endpoints
 
@@ -685,7 +733,7 @@ import { createModel } from '../../model';
 
 export const headlineAgent = new Agent({
   id: 'headlineGenerator',
-  model: createModel(),
+  model: createModel('fast'), // Uses LLM_MODEL_FAST (cheaper, for grouping/scoring)
   instructions: `You are a news curator. Given a list of articles scraped today and the user's
 profile (background, interests, preferred style), you must:
 
@@ -716,7 +764,7 @@ import { tavilySearchTool, tavilyExtractTool, fetchContentTool } from '../tools'
 
 export const articleAgent = new Agent({
   id: 'articleGenerator',
-  model: createModel(),
+  model: createModel('pro'), // Uses LLM_MODEL_PRO (higher quality, for deep-dive articles)
   tools: {
     tavilySearch: tavilySearchTool,
     tavilyExtract: tavilyExtractTool,
@@ -843,6 +891,7 @@ export const tavilySearchTool = createTool({
 - Infinite scroll feed grouped by day
 - Each day section: date header + topic cards
 - Topic card: headline, summary, source count, tags, relevance indicator
+- Topic types: 'hot' topics displayed prominently, 'normal' topics in standard layout, 'standalone' articles shown as individual items
 - Click card → navigate to `/article/:topicId`
 - Tag filter bar: clickable tag pills, toggleable, filters feed
 
@@ -893,17 +942,20 @@ App
 
 ### Key Libraries
 
+**UI**: ShadCN/ui components with BasaltUI theme (`@basalt-ui` from [jkrumm/basalt-ui](https://github.com/jkrumm/basalt-ui)) for consistent ShadCN + Tailwind CSS styling. Install components via `bunx --bun shadcn@latest add <component>`.
+
 ```json
 {
   "dependencies": {
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.0.0",
-    "@ai-sdk/react": "^1.0.0",
+    "@ai-sdk/react": "latest",
     "@tanstack/react-query": "^5.0.0",
-    "react-markdown": "^9.0.0",
-    "remark-gfm": "^4.0.0",
+    "react-markdown": "latest",
+    "remark-gfm": "latest",
     "lucide-react": "latest",
+    "@sentry/react": "latest",
     "tailwindcss": "^4.0.0"
   }
 }
@@ -915,19 +967,31 @@ App
 
 ### Environment Variables
 
+All config validated centrally with Zod at startup. LLM connection tested on settings save. User overrides from Settings UI persisted to SQLite `settings` table.
+
 ```bash
 # Required
 AUTH_SECRET=              # Shared secret for login
 LLM_PROVIDER=google      # google | openai | anthropic | openai-compatible
-LLM_MODEL=gemini-2.0-flash-001
+LLM_MODEL=gemini-2.0-flash-001  # Default model for all operations
 LLM_API_KEY=              # API key for the LLM provider
 TAVILY_API_KEY=           # Tavily API key (free tier: 1000 credits/mo)
 
-# Optional
+# Optional - LLM
 LLM_BASE_URL=             # Custom base URL for LLM API
+LLM_MODEL_FAST=           # Fast model for headlines/scoring (defaults to LLM_MODEL)
+LLM_MODEL_PRO=            # Pro model for article generation (defaults to LLM_MODEL)
+
+# Optional - Observability
+SENTRY_DSN=               # Sentry DSN (optional, no-op if unset)
+
+# Optional - Content Extraction
+FIRECRAWL_URL=            # Self-hosted Firecrawl URL (optional, e.g. http://localhost:3002)
+
+# Optional - General
 PORT=3000                 # Server port (default: 3000)
 DATABASE_PATH=/app/data/open-news.db  # SQLite database path
-TIMEZONE=Europe/Berlin    # Timezone for cron scheduling
+TIMEZONE=UTC              # Timezone for cron scheduling
 CRON_SCHEDULE=0 6 * * *   # Cron expression for daily digest (default: 6am)
 LOG_LEVEL=info            # debug | info | warn | error
 ```
@@ -1043,6 +1107,8 @@ open http://localhost:3000
 
 ### GitHub Actions CI/CD
 
+**Release workflow**: Semantic release triggered via GitHub Actions `workflow_dispatch` ("Make Release" button). Bumps version based on conventional commits, generates CHANGELOG.md, creates GitHub Release, then builds and pushes Docker image tagged with the version. Uses `commitlint` in CI to validate conventional commit messages.
+
 ```yaml
 # .github/workflows/ci.yml
 name: CI
@@ -1069,6 +1135,7 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check        # biome check
       - run: bun run typecheck     # tsc -b
+      - run: bunx commitlint --from ${{ github.event.pull_request.base.sha || 'HEAD~1' }} --to HEAD
 
   docker:
     name: Build & Push Docker Image
@@ -1188,6 +1255,7 @@ jobs:
     "string-similarity": "latest",
     "croner": "latest",
     "zod": "latest",
+    "@sentry/bun": "latest",
     "@open-news/shared": "workspace:*"
   },
   "devDependencies": {
@@ -1231,6 +1299,7 @@ jobs:
 
 ### Phase 1: Project Setup
 
+- [ ] Create project CLAUDE.md for Claude Code integration
 - [ ] Initialize Bun monorepo with workspaces
 - [ ] Set up `packages/shared` with types
 - [ ] Set up `apps/server` with Hono + basic health endpoint
@@ -1239,19 +1308,21 @@ jobs:
 - [ ] Configure TypeScript (project references)
 - [ ] Set up Drizzle ORM + SQLite schema + migrations
 - [ ] Dockerfile + docker-compose.yml
-- [ ] GitHub Actions CI (lint + typecheck + docker build)
+- [ ] GitHub Actions CI (lint + typecheck + commitlint + docker build)
+- [ ] Semantic release setup (workflow_dispatch trigger)
+- [ ] ShadCN/ui + BasaltUI theme setup
 
 ### Phase 2: Backend Core
 
-- [ ] Environment config validation (Zod)
-- [ ] Auth middleware (shared secret + session cookie)
+- [ ] Environment config validation (Zod schema, connection testing)
+- [ ] Auth middleware (shared secret + cookie + bearer token dual-mode)
 - [ ] Settings CRUD endpoints
 - [ ] Sources CRUD endpoints
-- [ ] LLM model factory (provider-agnostic)
+- [ ] LLM model factory (provider-agnostic, fast/pro tier support)
 - [ ] RSS feed parser service
 - [ ] Hacker News API client
 - [ ] Tavily search client
-- [ ] Content extraction service (readability + Tavily fallback)
+- [ ] Content extraction service (ContentExtractor interface + readability + Tavily chain)
 - [ ] Deduplication service (URL normalization + title similarity)
 - [ ] Cron scheduling with croner
 
@@ -1259,7 +1330,7 @@ jobs:
 
 - [ ] Mastra instance setup
 - [ ] Mastra tools (Tavily search, extract, content fetch)
-- [ ] Headline Agent (group + score + generate headlines)
+- [ ] Headline Agent (group + score + assign topicType + generate headlines)
 - [ ] Daily Digest Workflow (fetch → dedup → extract → headline)
 - [ ] Article Agent (deep-dive generation)
 - [ ] Article generation endpoint with SSE streaming
@@ -1276,6 +1347,7 @@ jobs:
 
 ### Phase 5: Polish
 
+- [ ] Sentry integration (optional via `SENTRY_DSN` env var, `@sentry/bun` + `@sentry/react`)
 - [ ] Error handling (global error boundaries, API error responses)
 - [ ] Loading states and skeletons
 - [ ] Manual digest trigger (admin endpoint)
@@ -1307,14 +1379,14 @@ Pre-configured feeds for first-time setup (user can modify):
 
 ### Monthly Operating Cost (MVP)
 
-| Resource | Cost | Notes |
-|----------|------|-------|
-| RSS feeds | $0 | Unlimited, free |
-| Hacker News API | $0 | Unlimited, no auth |
-| Tavily (free tier) | $0 | 1,000 credits/month |
-| LLM (Gemini Flash) | ~$1-5 | Daily headlines + ~30 article deep-dives |
-| VPS (Hetzner CX22) | ~$4/mo | 2 vCPU, 4GB RAM, 40GB SSD |
-| **Total** | **~$5-10/mo** | |
+| Resource           | Cost          | Notes                                    |
+|--------------------|---------------|------------------------------------------|
+| RSS feeds          | $0            | Unlimited, free                          |
+| Hacker News API    | $0            | Unlimited, no auth                       |
+| Tavily (free tier) | $0            | 1,000 credits/month                      |
+| LLM (Gemini Flash) | ~$1-5         | Daily headlines + ~30 article deep-dives |
+| VPS (Hetzner CX22) | ~$4/mo        | 2 vCPU, 4GB RAM, 40GB SSD                |
+| **Total**          | **~$5-10/mo** |                                          |
 
 ### Tavily Credit Budget (1,000/month)
 
@@ -1330,3 +1402,121 @@ Pre-configured feeds for first-time setup (user can modify):
 - Daily total: ~5K + (30 articles/month / 30 days) x 13K = ~18K tokens/day
 - Monthly: ~540K tokens
 - Gemini Flash cost: ~$0.04/day = ~$1.20/month
+
+---
+
+## 13. Post-MVP Roadmap
+
+Features and improvements deferred from MVP scope, organized by priority. Each item builds on top of the MVP architecture without requiring fundamental changes.
+
+### P1: High Value, Low Effort
+
+**Firecrawl Content Extraction Adapter**
+- Add `firecrawlExtractor` to the `ContentExtractor` chain (enabled via `FIRECRAWL_URL` env var)
+- `@mendable/firecrawl-js` SDK, ~15 lines of implementation
+- Slots between readability and Tavily in the fallback chain
+- Handles JS-rendered sites without using Tavily credits
+
+**Mastra AI Studio**
+- Enable Mastra's built-in dev UI for debugging agents/workflows locally
+- Useful during development to inspect LLM prompts, tool calls, and workflow execution
+
+**AI-Verified Deduplication (Second Pass)**
+- Add a focused LLM call for borderline title similarity pairs (0.5-0.7 Dice score)
+- "Are these the same story?" prompt with fast model, ~5-10 calls/day
+- Reduces false positives without the cost of full pairwise AI comparison
+
+**Settings-Driven LLM Config**
+- Allow users to configure LLM model tiers (fast/pro) from the Settings UI
+- Test LLM connection before persisting changes
+- Override ENV defaults with user preferences from SQLite
+
+### P2: High Value, Medium Effort
+
+**OpenTelemetry / AI Pipeline Observability**
+- Mastra has built-in OTel support with GenAI Semantic Conventions (token usage, latency, prompts)
+- Enable via `OTEL_EXPORTER_OTLP_ENDPOINT` env var (opt-in, no-op if unset)
+- Use HTTP/protobuf exporter (`@opentelemetry/exporter-trace-otlp-proto`) -- gRPC has Bun compatibility issues
+- Users point to their own SigNoz/Jaeger/Grafana Tempo instance
+- `@hono/otel` middleware for HTTP request tracing
+- **Never phone-home** -- provide capability for users to monitor their own instances
+
+**SSR/SSG for Feed Page**
+- Hono supports React SSR via `@hono/react-renderer` and `renderToReadableStream()`
+- Feed updates once/day, making it a good SSG candidate
+- Article pages remain CSR with streaming
+- No metaframework needed -- Hono handles it natively
+
+**Additional Data Sources**
+- GNews API adapter (optional, `GNEWS_API_KEY`, 100 req/day free, non-commercial)
+- Perplexity API adapter (optional, `PERPLEXITY_API_KEY`, AI-powered search)
+- Reddit RSS adapter (subreddit-specific feeds, no API key needed)
+- Each source implements the existing source interface, enabled via config
+
+**Infinite Scroll Pagination**
+- Feed API pagination by date cursor (`?cursor=2026-02-07&limit=3`)
+- TanStack Query `useInfiniteQuery` for seamless day-by-day loading
+- Show 3 days by default, load more on scroll
+
+### P3: Medium Value, Higher Effort
+
+**Multi-User / Multi-Tenancy**
+- Replace single-user shared secret with per-user auth
+- Consider Better-Auth for OAuth/credential-based login
+- Per-user settings, sources, and feed preferences
+- Hono's cross-runtime portability helps if edge deployment is needed later
+
+**Article ImageGen**
+- AI-generated header images for articles (DALL-E, Gemini Imagen)
+- Stored as static assets in `/app/data/images/`
+
+**Article Syntax Highlighting**
+- `rehype-highlight` or `shiki` integration with `react-markdown`
+- Code blocks in generated articles rendered with proper syntax highlighting
+
+**GenAI Diagrams in Articles**
+- Mermaid diagram generation in article content
+- `mermaid` renderer component in the markdown pipeline
+
+**YouTube / Podcast Integration**
+- YouTube transcript extraction (transcript API or yt-dlp)
+- Podcast RSS with audio-to-text transcription
+- Both feed into the same raw articles pipeline
+
+### P4: Nice to Have
+
+**Semantic Release CI/CD Improvements**
+- Automated Docker image tagging with semantic versions (v1.2.3)
+- CHANGELOG.md auto-generation from conventional commits
+- GitHub Release with changelog body
+
+**Advanced Deduplication**
+- SimHash or embedding-based dedup for high-volume feeds (>500 articles/day)
+- Vector database (e.g., Turso with vector extension) for semantic similarity
+
+**External API**
+- Public REST API for feed consumption by external clients
+- Bearer token auth (already supported in dual-auth middleware)
+- Webhook notifications for new daily digests
+
+**Topic Subscriptions / Alerts**
+- User can "watch" specific tags or topics
+- Daily email digest option (optional SMTP config)
+
+---
+
+## 14. Decision Log
+
+| # | Decision | Chosen | Alternatives | Why |
+|---|----------|--------|-------------|-----|
+| 1 | Web framework | Hono | Elysia | Mastra official adapter, SSE maturity, cross-runtime, ecosystem |
+| 2 | AI SDK | Vercel AI SDK (v6.x) | TanStack AI (v0.3 alpha) | Production stability, identical Hono integration |
+| 3 | Content extraction | Pluggable chain (readability → Tavily) | Hardcoded if/else | Same effort, extensible for Firecrawl later |
+| 4 | Deduplication | URL normalization + Dice coefficient | AI-based, embeddings | Instant, free, sufficient for MVP volume |
+| 5 | Observability (MVP) | Sentry (optional via env var) | SigNoz/OTel, nothing | 30min setup, no-op if unset, OSS sponsorship available |
+| 6 | Observability (post-MVP) | Mastra OTel export | Sentry only | GenAI semantic conventions, AI pipeline tracing |
+| 7 | Auth | Cookie + Bearer dual-mode | Cookie only | Supports both web SPA and external API consumers |
+| 8 | Model tiers | Fast + Pro via env vars | Single model | Headlines need speed, articles need quality |
+| 9 | Topic types | hot / normal / standalone | Single type | Better UX, one column + prompt tweak |
+| 10 | Config storage | SQLite settings table | Config file | Single source of truth, already have DB |
+| 11 | Phone-home telemetry | Never | Opt-in to author's SigNoz | OSS community trust, provide hooks not monitoring |
