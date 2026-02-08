@@ -52,24 +52,9 @@ readonly FORBIDDEN_COMMANDS=(
   "npm add"
 )
 
-# Phase definitions (from IMPLEMENTATION.md)
+# Phase definitions (auto-detected from IMPLEMENTATION.md)
 typeset -A PHASE_NAMES
-PHASE_NAMES=(
-  [1]="Project Setup"
-  [2]="Backend Core"
-  [3]="AI Pipeline"
-  [4]="Frontend"
-  [5]="Polish"
-)
-
 typeset -A PHASE_TASK_RANGES
-PHASE_TASK_RANGES=(
-  [1]="1-5"
-  [2]="6-13"
-  [3]="14-20"
-  [4]="21-25"
-  [5]="26-28"
-)
 
 ################################################################################
 # Helper Functions
@@ -253,6 +238,66 @@ run_claude() {
   return 1
 }
 
+# Auto-detect phase structure from IMPLEMENTATION.md
+detect_phases() {
+  log "Auto-detecting phase structure from ${IMPL_FILE}..."
+
+  if [[ ! -f "${IMPL_FILE}" ]]; then
+    log_error "${IMPL_FILE} not found"
+    return 1
+  fi
+
+  local current_phase=""
+  local phase_tasks=()
+
+  while IFS= read -r line; do
+    # Match phase headers: "## Phase N: Name"
+    if echo "$line" | grep -qE '^## Phase [0-9]+:'; then
+      # Save previous phase if exists
+      if [[ -n "${current_phase}" ]]; then
+        if [[ ${#phase_tasks[@]} -gt 0 ]]; then
+          local first_task="${phase_tasks[1]}"  # zsh arrays are 1-indexed
+          local last_task="${phase_tasks[-1]}"
+          PHASE_TASK_RANGES[$current_phase]="${first_task}-${last_task}"
+          log "  Phase ${current_phase}: ${PHASE_NAMES[$current_phase]} (${first_task} to ${last_task}, ${#phase_tasks[@]} tasks)"
+        fi
+      fi
+
+      # Start new phase - extract phase number and name
+      current_phase=$(echo "$line" | sed -E 's/^## Phase ([0-9]+):.*/\1/')
+      local phase_name=$(echo "$line" | sed -E 's/^## Phase [0-9]+: (.+)$/\1/')
+      PHASE_NAMES[$current_phase]="$phase_name"
+      phase_tasks=()
+
+    # Match task headers: "### X.Y — Title" or "### X.Y: Title"
+    elif echo "$line" | grep -qE '^### [0-9]+\.[0-9]+ [—:-]'; then
+      local task_id=$(echo "$line" | sed -E 's/^### ([0-9]+\.[0-9]+) [—:-].*/\1/')
+      if [[ -n "${current_phase}" ]]; then
+        phase_tasks+=("${task_id}")
+      fi
+    fi
+  done < "${IMPL_FILE}"
+
+  # Save last phase
+  if [[ -n "${current_phase}" ]]; then
+    if [[ ${#phase_tasks[@]} -gt 0 ]]; then
+      local first_task="${phase_tasks[1]}"  # zsh arrays are 1-indexed
+      local last_task="${phase_tasks[-1]}"
+      PHASE_TASK_RANGES[$current_phase]="${first_task}-${last_task}"
+      log "  Phase ${current_phase}: ${PHASE_NAMES[$current_phase]} (${first_task} to ${last_task}, ${#phase_tasks[@]} tasks)"
+    fi
+  fi
+
+  local phase_count=${#PHASE_NAMES[@]}
+  if [[ ${phase_count} -eq 0 ]]; then
+    log_error "No phases detected in ${IMPL_FILE}"
+    return 1
+  fi
+
+  log_success "Detected ${phase_count} phases"
+  return 0
+}
+
 # Parse tasks from IMPLEMENTATION.md for a phase
 parse_phase_tasks() {
   local phase=$1
@@ -260,28 +305,39 @@ parse_phase_tasks() {
   local start_task=${range%-*}
   local end_task=${range#*-}
 
-  log "Parsing tasks ${start_task}-${end_task} from ${IMPL_FILE}..."
+  log "Parsing tasks ${start_task} to ${end_task} from ${IMPL_FILE}..."
+
+  # Extract phase name for better prompt
+  local phase_name=${PHASE_NAMES[$phase]}
 
   # Extract tasks using Claude
   local parse_prompt=$(cat <<EOF
-Parse tasks ${start_task} through ${end_task} from docs/IMPLEMENTATION.md.
+Parse ALL tasks from Phase ${phase} in docs/IMPLEMENTATION.md.
+
+IMPORTANT: Phase ${phase} contains tasks with IDs from ${start_task} to ${end_task} (inclusive).
+Extract EVERY task in this range - do not stop early.
 
 For each task, extract:
-1. Task ID (e.g., "1.1", "2.3")
-2. Task title (brief description)
-3. Dependencies (if any)
+1. Task ID (format: X.Y where X is phase number, Y is task number within phase)
+2. Task title (brief description from the heading)
+3. Dependencies (task IDs from "depends: #X.Y" lines, empty array if none)
 
-Output a JSON array with this structure:
+Output a JSON array with this exact structure:
 [
   {
     "id": "1.1",
-    "title": "Initialize Bun monorepo",
+    "title": "Initialize monorepo and workspace structure",
     "dependencies": []
   },
-  ...
+  {
+    "id": "1.2",
+    "title": "Configure TypeScript with project references",
+    "dependencies": ["1.1"]
+  }
 ]
 
 Read docs/IMPLEMENTATION.md and output ONLY the JSON array, no other text.
+Ensure you extract ALL tasks from ${start_task} through ${end_task}.
 EOF
 )
 
@@ -296,26 +352,42 @@ EOF
     return 1
   fi
 
+  # Count tasks and validate
+  local parsed_count=$(echo "${tasks_json}" | jq '. | length')
+  log "Parsed ${parsed_count} tasks"
+
   # Add tasks to state
   echo "${tasks_json}" | jq -c '.[]' | while read -r task; do
     local task_id=$(echo "${task}" | jq -r '.id')
     local task_title=$(echo "${task}" | jq -r '.title')
+
+    # Validate task ID matches phase
+    if [[ ! "${task_id}" =~ ^${phase}\. ]]; then
+      log_warn "Task ID ${task_id} doesn't match phase ${phase}, skipping"
+      continue
+    fi
+
     add_task "${task_id}" "${task_title}" "pending"
   done
 
-  log_success "Parsed $(echo "${tasks_json}" | jq '. | length') tasks"
+  # Verify we added tasks
+  local added_count=$(jq --arg p "${phase}" '[.tasks[] | select(.id | startswith($p + "."))] | length' "${STATE_FILE}")
+
+  if [[ ${added_count} -eq 0 ]]; then
+    log_error "No tasks added for phase ${phase}"
+    return 1
+  fi
+
+  log_success "Added ${added_count} tasks for phase ${phase}"
 }
 
 # Get next pending task for phase
 get_next_task() {
   local phase=$1
-  local range=${PHASE_TASK_RANGES[$phase]}
-  local start_task=${range%-*}
-  local end_task=${range#*-}
 
-  # Get first pending or in_progress task in range
-  jq -r --arg start "${start_task}" --arg end "${end_task}" \
-    '.tasks[] | select(.status == "pending" or .status == "in_progress") | select(.id >= $start and .id <= $end) | .id' \
+  # Get first pending or in_progress task that starts with phase number
+  jq -r --arg p "${phase}" \
+    '.tasks[] | select(.status == "pending" or .status == "in_progress") | select(.id | startswith($p + ".")) | .id' \
     "${STATE_FILE}" | head -n 1
 }
 
@@ -567,6 +639,12 @@ main() {
 
   # Initialize state
   init_state
+
+  # Auto-detect phase structure from IMPLEMENTATION.md
+  if ! detect_phases; then
+    log_error "Failed to detect phases from ${IMPL_FILE}"
+    exit 1
+  fi
 
   # Resume from saved phase if requested
   if [[ "${resume}" == true ]]; then
