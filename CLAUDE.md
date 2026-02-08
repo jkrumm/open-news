@@ -4,8 +4,8 @@ AI-powered news aggregator. Single Docker container, provider-agnostic LLM, self
 
 ## Specification
 
-@docs/SPEC.md — Full technical spec (PRD, ADRs, schema, API design, infra)
-@docs/IMPLEMENTATION.md — 28 tasks across 5 phases with task-level dependencies
+- `docs/SPEC.md` — Full technical spec (PRD, ADRs, schema, API design, infra). Read on demand when implementing tasks.
+- `docs/IMPLEMENTATION.md` — 28 tasks across 5 phases with task-level dependencies
 
 ## Tech Stack
 
