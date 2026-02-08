@@ -20,7 +20,7 @@ AI-powered news aggregator. Single Docker container, provider-agnostic LLM, self
 | Content extraction | `@mozilla/readability` + `linkedom`, Tavily fallback |
 | Dedup | URL normalization + `fast-dice-coefficient` (Dice similarity) |
 | Cron | croner (ESM, Bun-compatible, timezone-aware) |
-| Frontend | React 19, Vite, react-router-dom 7, TanStack Query |
+| Frontend | React 19, Vite, TanStack Router, TanStack Query |
 | Styling | Tailwind v4 (CSS-first), ShadCN/ui + BasaltUI |
 | Streaming | `useCompletion` (AI SDK) + `streamdown` (markdown renderer) |
 | Logging | Pino + hono-pino + Logdy (dev browser UI) |
@@ -43,6 +43,7 @@ These are the most mistake-prone rules. Violating any of these will cause build 
 10. **Auth** — JWT signed with key derived from `AUTH_SECRET` (deterministic, survives restarts). No expiry. Bearer compares raw `AUTH_SECRET` directly.
 11. **LLM config** — ENV-only for MVP. Settings UI override is post-MVP P1.
 12. **Exports** — Named exports only, no default exports. Function components, no `React.FC`.
+13. **Routing** — TanStack Router file-based routing. Vite plugin `tanstackRouter()` MUST come before `react()` in plugins array. Routes use `createFileRoute`, params are type-safe (e.g., `/article/$topicId`).
 
 ## Monorepo Structure
 

@@ -85,14 +85,22 @@
 ### 1.6 — Set up Vite + React + Tailwind
 `[SPEC §ADR-005, §8 Frontend]` · depends: #1.2
 
-- Install React 19, Vite, Tailwind v4, react-router-dom v7 in `apps/web`
-- `apps/web/index.html` + `vite.config.ts` with proxy to backend
-- `apps/web/src/main.tsx` → `App.tsx` with react-router setup (3 routes: `/`, `/article/:id`, `/settings`)
+- Install React 19, Vite, Tailwind v4, TanStack Router in `apps/web`
+- Packages: `@tanstack/react-router`, `@tanstack/router-plugin` (Vite plugin), `@tanstack/react-router-devtools`, `zod`
+- `apps/web/index.html` + `vite.config.ts` with:
+  - `tanstackRouter()` plugin (MUST come before `react()` in plugins array)
+  - Proxy to backend (`/api` → `http://localhost:3000`)
+- `apps/web/src/main.tsx` → Router setup with `RouterProvider`
+- `apps/web/src/routes/` directory structure for file-based routing:
+  - `__root.tsx` - Root layout with `<Outlet />`
+  - `index.tsx` - Feed page route (`/`)
+  - `article.$topicId.tsx` - Article page route (`/article/$topicId`)
+  - `settings.tsx` - Settings page route (`/settings`)
 - `apps/web/src/styles/globals.css` with Tailwind v4 imports
 - Placeholder route components
 - `dev` script for Vite dev server
-- Verify HMR works and proxy hits backend health endpoint
-- research: `tailwind css v4 setup vite` (Context7), `react-router-dom v7`
+- Verify HMR works, router devtools appear, and proxy hits backend health endpoint
+- research: `tailwind css v4 setup vite` (Context7), `TanStack Router vite setup` (Context7)
 
 ### 1.7 — Set up Drizzle ORM + SQLite schema
 `[SPEC §4 Data Model, §ADR-004]` · depends: #1.4

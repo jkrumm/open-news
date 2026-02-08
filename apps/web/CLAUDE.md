@@ -4,7 +4,7 @@ React 19 SPA with Vite, TanStack Query, Tailwind v4, and AI SDK streaming.
 
 ## Stack
 
-- **Framework**: React 19 + react-router-dom 7
+- **Framework**: React 19 + TanStack Router (file-based, type-safe)
 - **Build**: Vite (with `@vitejs/plugin-react`)
 - **State**: TanStack Query v5 (server state), React state (local UI)
 - **Styling**: Tailwind v4 (CSS-first) + ShadCN/ui + BasaltUI theme
@@ -16,12 +16,12 @@ React 19 SPA with Vite, TanStack Query, Tailwind v4, and AI SDK streaming.
 ```
 src/
 ├── main.tsx            # React entry point
-├── App.tsx             # Router setup (react-router-dom)
-├── routes/
-│   ├── Feed.tsx        # Daily feed with infinite scroll
-│   ├── Article.tsx     # Deep-dive article with streaming
-│   ├── Settings.tsx    # Preferences and source management
-│   └── Login.tsx       # Auth (single secret input)
+├── routes/             # File-based routing (TanStack Router)
+│   ├── __root.tsx      # Root layout with Outlet
+│   ├── index.tsx       # Feed page (`/`)
+│   ├── article.$topicId.tsx  # Article page (`/article/$topicId`)
+│   ├── settings.tsx    # Settings page (`/settings`)
+│   └── login.tsx       # Login page (`/login`)
 ├── components/
 │   ├── TopicCard.tsx   # Headline card (summary, tags, source count)
 │   ├── DaySection.tsx  # Date header + topic cards
@@ -42,12 +42,28 @@ src/
 
 ## Routes
 
-| Path | Component | Data |
-|------|-----------|------|
-| `/` | Feed | `useInfiniteQuery` → `GET /api/v1/feed?cursor=&tag=` |
-| `/article/:id` | Article | `useQuery` + `useCompletion` for streaming |
-| `/settings` | Settings | `useQuery` + `useMutation` for settings/sources |
-| `/login` | Login | `POST /api/v1/auth/login` |
+File-based routing with TanStack Router. Each route file exports `createFileRoute`:
+
+| Path | File | Component | Data |
+|------|------|-----------|------|
+| `/` | `routes/index.tsx` | Feed | `useInfiniteQuery` → `GET /api/v1/feed?cursor=&tag=` |
+| `/article/$topicId` | `routes/article.$topicId.tsx` | Article | Type-safe params + `useCompletion` for streaming |
+| `/settings` | `routes/settings.tsx` | Settings | `useQuery` + `useMutation` for settings/sources |
+| `/login` | `routes/login.tsx` | Login | `POST /api/v1/auth/login` |
+
+**Type-Safe Navigation:**
+```typescript
+import { useNavigate } from '@tanstack/react-router';
+
+// ✅ Type-safe - params autocompleted
+navigate({ to: '/article/$topicId', params: { topicId: '123' } });
+
+// ✅ Type-safe search params with Zod validation
+navigate({
+  to: '/',
+  search: (prev) => ({ ...prev, tag: 'ai', cursor: '2026-02-07' })
+});
+```
 
 ## React Patterns
 

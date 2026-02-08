@@ -187,9 +187,20 @@ sqlite.run('PRAGMA foreign_keys = ON');
 
 **Styling**: Tailwind CSS v4 (CSS-first config, no `tailwind.config.js`).
 
-**Routing**: `react-router-dom` with three routes:
+**Challenged: TanStack Router vs react-router-dom** (Feb 2026)
+
+TanStack Router wins for this project:
+1. **Type Safety**: Automatic type inference for route params, search params, and loader data. `navigate({ to: '/article/$topicId', params: { topicId: '123' } })` is fully typed and autocompleted.
+2. **Search Param Validation**: Built-in Zod schema validation for URL search params (`validateSearch`), crucial for feed filtering and pagination.
+3. **File-Based Routing**: Vite plugin (`@tanstack/router-plugin`) auto-generates routes from file structure with code splitting.
+4. **Modern DX**: Built for React 19, devtools, and better integration with TanStack Query.
+5. **Migration Cost**: Low - similar API surface to react-router-dom v7, but with superior type safety.
+
+react-router-dom v7 added type safety, but it's opt-in and requires manual type definitions. TanStack Router infers types automatically from route definitions.
+
+**Routing**: TanStack Router with type-safe file-based routing. Three routes:
 - `/` - Daily feed (home)
-- `/article/:id` - Deep-dive article view
+- `/article/$topicId` - Deep-dive article view (type-safe params)
 - `/settings` - Preferences and source configuration
 
 ### ADR-006: Cron Scheduling - croner
@@ -1036,13 +1047,18 @@ App
   "dependencies": {
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router-dom": "^7.0.0",
+    "@tanstack/react-router": "^1.114.0",
     "@ai-sdk/react": "latest",
     "@tanstack/react-query": "^5.0.0",
     "streamdown": "latest",
     "lucide-react": "latest",
     "@sentry/react": "latest",
-    "tailwindcss": "^4.0.0"
+    "tailwindcss": "^4.0.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@tanstack/router-plugin": "^1.114.0",
+    "@tanstack/react-router-devtools": "^1.114.0"
   }
 }
 ```
@@ -1363,15 +1379,18 @@ jobs:
   "dependencies": {
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router-dom": "^7.0.0",
+    "@tanstack/react-router": "^1.114.0",
     "@ai-sdk/react": "latest",
     "@tanstack/react-query": "^5.0.0",
     "streamdown": "latest",
     "lucide-react": "latest",
-    "@open-news/shared": "workspace:*"
+    "@open-news/shared": "workspace:*",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "latest",
+    "@tanstack/router-plugin": "^1.114.0",
+    "@tanstack/react-router-devtools": "^1.114.0",
     "vite": "latest",
     "tailwindcss": "^4.0.0",
     "@tailwindcss/vite": "latest",

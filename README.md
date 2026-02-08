@@ -26,7 +26,7 @@ Built as a single-user, self-hosted application with emphasis on privacy, simpli
 | Content extraction | `@mozilla/readability` + `linkedom`, Tavily fallback |
 | Dedup | URL normalization + `fast-dice-coefficient` (Dice similarity) |
 | Cron | croner (ESM, Bun-compatible, timezone-aware) |
-| Frontend | React 19, Vite, react-router-dom 7, TanStack Query |
+| Frontend | React 19, Vite, TanStack Router, TanStack Query |
 | Styling | Tailwind v4 (CSS-first), ShadCN/ui + BasaltUI |
 | Streaming | `useCompletion` (AI SDK) + `streamdown` (markdown renderer) |
 | Logging | Pino + hono-pino + Logdy (dev browser UI) |
