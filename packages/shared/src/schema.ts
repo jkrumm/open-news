@@ -77,6 +77,28 @@ export const rawArticleSchema = z.object({
   scrapedDate: z.string(),
 });
 
+// ─── Pipeline Adapter Schemas ─────────────────────────────────
+
+export const discoveredArticleSchema = z.object({
+  title: z.string(),
+  url: z.string().url(),
+  snippet: z.string().nullable(),
+  author: z.string().nullable(),
+  publishedAt: z.string().nullable(),
+  externalId: z.string().nullable(),
+  score: z.number().nullable(),
+  sourceType: z.enum(SOURCE_TYPES),
+});
+
+export const extractedContentSchema = z.object({
+  title: z.string().nullable(),
+  content: z.string().min(1),
+  author: z.string().nullable(),
+  publishedAt: z.string().nullable(),
+  siteName: z.string().nullable(),
+  excerpt: z.string().nullable(),
+});
+
 // ─── Daily Topic ──────────────────────────────────────────────
 
 export const dailyTopicSchema = z.object({

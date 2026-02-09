@@ -140,13 +140,13 @@ function createModel() {
 - GNews: 100 req/day free but non-commercial license
 - Mediastack: 100 req/month free, no HTTPS
 
-**Post-MVP: Additional sources** (GNews, Perplexity, etc.) can be added later as optional source adapters. The source/extractor abstraction supports this without architectural changes. Not needed for MVP -- RSS + HN + Tavily covers the use case.
+**Post-MVP: Additional sources** (Exa, GNews, Serper, etc.) can be added later as optional source adapters via the `SourceAdapter` interface. See [`docs/PIPELINE.md`](./PIPELINE.md) for adapter interfaces, registry, and extension guide.
 
 **RSS is the backbone**: Free, reliable, user-controlled. Combined with Tavily for discovery and HN for tech community picks, this covers the MVP without paid API subscriptions.
 
 **RSS parsing**: Use `@extractus/feed-extractor` instead of `rss-parser`. It has official Bun support, ESM-first design, supports RSS/Atom/RDF/JSON feeds, and is actively maintained (last release Oct 2025). `rss-parser` has not been released in 2+ years and is CJS-only.
 
-**Content extraction**: For articles where RSS only provides a snippet, use `@mozilla/readability` + `linkedom` to extract full text. Fall back to `tavily_extract` for JS-heavy sites. `linkedom` is 90% smaller than `jsdom`, 3x faster, and proven compatible with Readability in production.
+**Content extraction**: See ADR-007 and [`docs/PIPELINE.md`](./PIPELINE.md) for the extraction chain architecture.
 
 ### ADR-004: Database - SQLite via bun:sqlite + Drizzle ORM
 
@@ -237,31 +237,11 @@ new Cron('0 6 * * *', { timezone: process.env.TIMEZONE ?? 'Europe/Berlin' }, asy
 
 **Cost**: Tavily Extract costs 1 credit per 5 URLs. With 1,000 free credits/month, budget ~200 fallback extractions (1,000 URLs).
 
-**Pluggable Extractor Architecture**: Use a `ContentExtractor` interface with a config-driven fallback chain pattern. Each extractor implements `extract(url) → ExtractedContent | null`. The chain tries extractors in order: free/fast first, paid API last.
+**Pluggable Extractor Architecture**: `ContentExtractor` interface with a config-driven fallback chain. Each extractor implements `extract(url) → ExtractedContent | null`. Chain tries extractors in order: free/fast first, paid API last. See [`docs/PIPELINE.md`](./PIPELINE.md) for full adapter interfaces, chain behavior, and registry implementation.
 
-```typescript
-interface ContentExtractor {
-  readonly name: string;
-  extract(url: string): Promise<ExtractedContent | null>;
-}
+**MVP**: ReadabilityExtractor (primary, free) + TavilyExtractor (fallback, paid). If all extractors fail, the article is discarded.
 
-// Chain order: readability (free) → firecrawl (self-hosted, optional) → tavily (paid)
-function buildExtractorChain(config: AppConfig): ContentExtractor[] { ... }
-```
-
-**MVP**: Ship with readability + Tavily extractors. The interface is ~30 lines of code -- same effort as hardcoding, but structured for future additions.
-
-**Extraction code**:
-```typescript
-import { parseHTML } from 'linkedom';
-import { Readability } from '@mozilla/readability';
-
-const { document } = parseHTML(html);
-const reader = new Readability(document);
-const article = reader.parse();
-```
-
-**Post-MVP**: Add Firecrawl adapter (`@mendable/firecrawl-js` SDK) for self-hosted instances. Skip Crawl4AI -- it is Python-first with no official JS SDK and an awkward async polling model.
+**Post-MVP**: Add FirecrawlExtractor (`@mendable/firecrawl-js` SDK) for self-hosted instances. Skip Crawl4AI -- Python-first, no official JS SDK.
 
 ### ADR-008: Deduplication - URL Normalization + Title Similarity
 
@@ -379,11 +359,16 @@ open-news/
 │   │   │   │   ├── schema.ts      # Drizzle schema
 │   │   │   │   └── migrate.ts     # Migration runner
 │   │   │   ├── services/
+│   │   │   │   ├── adapters/
+│   │   │   │   │   ├── source/         # Stage 1: SourceAdapter implementations
+│   │   │   │   │   │   ├── rss.ts
+│   │   │   │   │   │   ├── hackernews.ts
+│   │   │   │   │   │   └── tavily-search.ts
+│   │   │   │   │   ├── extractor/      # Stage 2: ContentExtractor implementations
+│   │   │   │   │   │   ├── readability.ts
+│   │   │   │   │   │   └── tavily-extract.ts
+│   │   │   │   │   └── registry.ts     # buildSourceAdapters, buildExtractorChain
 │   │   │   │   ├── ingestion.ts   # Source fetching orchestrator
-│   │   │   │   ├── rss.ts         # RSS feed parser
-│   │   │   │   ├── hackernews.ts  # HN API client
-│   │   │   │   ├── tavily.ts      # Tavily search client
-│   │   │   │   ├── extractor.ts   # Content extraction
 │   │   │   │   ├── dedup.ts       # Deduplication
 │   │   │   │   └── cron.ts        # Cron job setup
 │   │   │   └── mastra/
@@ -448,7 +433,9 @@ open-news/
 │   └── workflows/
 │       └── ci.yml
 └── docs/
-    └── SPEC.md                    # This file
+    ├── SPEC.md                    # This file
+    ├── PIPELINE.md                # Pipeline architecture + adapter interfaces
+    └── IMPLEMENTATION.md          # Task breakdown
 ```
 
 ### Component Diagram
@@ -581,7 +568,7 @@ User clicks headline
 
 ```typescript
 // packages/shared/src/types.ts - Source types enum
-export const SOURCE_TYPES = ['rss', 'hackernews', 'tavily'] as const;
+export const SOURCE_TYPES = ['rss', 'hackernews', 'tavily', 'exa', 'perplexity', 'serper', 'gnews'] as const;
 export type SourceType = typeof SOURCE_TYPES[number];
 
 // apps/server/src/db/schema.ts
@@ -1087,8 +1074,12 @@ LLM_MODEL_PRO=            # Pro model for article generation (defaults to LLM_MO
 # Optional - Observability
 SENTRY_DSN=               # Sentry DSN (optional, no-op if unset)
 
-# Optional - Content Extraction
-FIRECRAWL_URL=            # Self-hosted Firecrawl URL (optional, e.g. http://localhost:3002)
+# Optional - Pipeline Adapters (see docs/PIPELINE.md)
+FIRECRAWL_URL=            # Self-hosted Firecrawl URL (post-MVP, e.g. http://localhost:3002)
+EXA_API_KEY=              # Exa neural search (post-MVP)
+GNEWS_API_KEY=            # GNews API (post-MVP, 100 req/day free)
+SERPER_API_KEY=           # Serper Google SERP API (post-MVP)
+PERPLEXITY_API_KEY=       # Perplexity AI research tool (post-MVP, Stage 3 only)
 
 # Optional - General
 NODE_ENV=production       # production | development (controls pino-pretty, defaults to development)
@@ -1519,10 +1510,10 @@ Features and improvements deferred from MVP scope, organized by priority. Each i
 
 ### P1: High Value, Low Effort
 
-**Firecrawl Content Extraction Adapter**
-- Add `firecrawlExtractor` to the `ContentExtractor` chain (enabled via `FIRECRAWL_URL` env var)
+**Firecrawl Content Extraction Adapter** (see [`docs/PIPELINE.md`](./PIPELINE.md) §Extension Guide)
+- Add `FirecrawlExtractor` to the `ContentExtractor` chain (enabled via `FIRECRAWL_URL` env var)
 - `@mendable/firecrawl-js` SDK, ~15 lines of implementation
-- Slots between readability and Tavily in the fallback chain
+- Slots between ReadabilityExtractor and TavilyExtractor in the fallback chain
 - Handles JS-rendered sites without using Tavily credits
 
 **Mastra AI Studio**
@@ -1556,11 +1547,12 @@ Features and improvements deferred from MVP scope, organized by priority. Each i
 - Article pages remain CSR with streaming
 - No metaframework needed -- Hono handles it natively
 
-**Additional Data Sources**
+**Additional Data Sources** (see [`docs/PIPELINE.md`](./PIPELINE.md) §Extension Guide)
+- Exa neural search adapter (optional, `EXA_API_KEY`, semantic/embedding search)
 - GNews API adapter (optional, `GNEWS_API_KEY`, 100 req/day free, non-commercial)
-- Perplexity API adapter (optional, `PERPLEXITY_API_KEY`, AI-powered search)
+- Perplexity research tool (optional, `PERPLEXITY_API_KEY`, Stage 3 only — answer engine, not URL discovery)
 - Reddit RSS adapter (subreddit-specific feeds, no API key needed)
-- Each source implements the existing source interface, enabled via config
+- Each source implements `SourceAdapter`, enabled via per-adapter env var
 
 **Infinite Scroll UX Enhancement**
 - Note: cursor-based feed API pagination is included in MVP (see §5)

@@ -1,7 +1,15 @@
 // Domain types and constants
 
 // ─── Source Types ─────────────────────────────────────────────
-export const SOURCE_TYPES = ['rss', 'hackernews', 'tavily'] as const;
+export const SOURCE_TYPES = [
+  'rss',
+  'hackernews',
+  'tavily',
+  'exa',
+  'perplexity',
+  'serper',
+  'gnews',
+] as const;
 export type SourceType = (typeof SOURCE_TYPES)[number];
 
 // ─── Topic Types ─────────────────────────────────────────────
@@ -146,4 +154,45 @@ export interface AdminStatusResponse {
 export interface HealthResponse {
   status: 'ok';
   timestamp: string;
+}
+
+// ─── Pipeline Adapter Types ─────────────────────────────────
+
+/** Article discovered by a Stage 1 source adapter (see docs/PIPELINE.md) */
+export interface DiscoveredArticle {
+  title: string;
+  url: string;
+  snippet: string | null;
+  author: string | null;
+  publishedAt: string | null;
+  externalId: string | null;
+  score: number | null;
+  sourceType: SourceType;
+}
+
+/** Content extracted by a Stage 2 extractor (see docs/PIPELINE.md) */
+export interface ExtractedContent {
+  title: string | null;
+  content: string;
+  author: string | null;
+  publishedAt: string | null;
+  siteName: string | null;
+  excerpt: string | null;
+}
+
+/** Stage 1: Source discovery adapter */
+export interface SourceAdapter {
+  readonly type: SourceType;
+  fetch(source: Source, options?: SourceFetchOptions): Promise<DiscoveredArticle[]>;
+}
+
+export interface SourceFetchOptions {
+  queries?: string[];
+  maxResults?: number;
+}
+
+/** Stage 2: Content extraction adapter */
+export interface ContentExtractor {
+  readonly name: string;
+  extract(url: string): Promise<ExtractedContent | null>;
 }

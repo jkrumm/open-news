@@ -193,43 +193,49 @@ depends: #1.5
 - Tier resolution: `LLM_MODEL_FAST` → `LLM_MODEL` fallback, `LLM_MODEL_PRO` → `LLM_MODEL` fallback
 - research: `vercel ai sdk provider setup` (Context7)
 
-### 2.6 — RSS feed parser service
-`[SPEC §ADR-003, §3 Data Flow]` · depends: #1.7
+### 2.6 — Adapter interfaces + registry
+`[PIPELINE §Adapter Registry]` · depends: #1.4
 
-- `apps/server/src/services/rss.ts`
-- Install `@extractus/feed-extractor` (ESM-first, official Bun support, actively maintained)
-- Fetch all enabled RSS sources, parse items
-- Implement conditional fetching manually (ETag/If-Modified-Since headers via `fetchOptions`)
-- Return normalized raw article objects
-- research: `@extractus/feed-extractor` API and usage
+- `packages/shared/src/types.ts` — `SourceAdapter`, `ContentExtractor`, `DiscoveredArticle`, `ExtractedContent` interfaces (already added)
+- `packages/shared/src/schema.ts` — Zod schemas for `DiscoveredArticle`, `ExtractedContent` (already added)
+- `apps/server/src/services/adapters/registry.ts` — `buildSourceAdapters(config)`, `buildExtractorChain(config)`, `extractContent(chain, url, logger)`
+- Registry enables adapters based on env var presence
 
-### 2.7 — Hacker News API client
-`[SPEC §ADR-003]` · depends: #1.7
+### 2.7 — Source discovery adapters (RSS + HN + Tavily)
+`[PIPELINE §Stage 1]` · depends: #2.6
 
-- `apps/server/src/services/hackernews.ts`
-- Fetch top 50 stories from HN API (`/v0/topstories.json` + `/v0/item/{id}.json`)
-- Parallel item fetches with concurrency limit
-- Return normalized raw article objects
-- research: `hacker news api` documentation
+- `apps/server/src/services/adapters/source/rss.ts` — `RssSourceAdapter`
+  - Install `@extractus/feed-extractor` (ESM-first, official Bun support)
+  - Conditional fetching via ETag/If-Modified-Since headers
+  - Returns `DiscoveredArticle[]`
+- `apps/server/src/services/adapters/source/hackernews.ts` — `HackerNewsSourceAdapter`
+  - HN Firebase API (`/v0/topstories.json` + `/v0/item/{id}.json`)
+  - Parallel item fetches with concurrency limit
+  - Returns `DiscoveredArticle[]`
+- `apps/server/src/services/adapters/source/tavily-search.ts` — `TavilySearchSourceAdapter`
+  - Only active if `TAVILY_API_KEY` is set
+  - Search based on user's configured `searchQueries`
+  - Returns `DiscoveredArticle[]`
+- research: `@extractus/feed-extractor` API, `hacker news api`, `tavily search api`
 
-### 2.8 — Tavily search client
-`[SPEC §ADR-003]` · depends: #2.1
+### 2.8 — Content extractor adapters (Readability + Tavily)
+`[PIPELINE §Stage 2]` · depends: #2.6, #2.1
 
-- `apps/server/src/services/tavily.ts`
-- Search based on user's configured `searchQueries` from settings
-- Return normalized raw article objects
-- research: `tavily search api` (Context7 or web)
+- `apps/server/src/services/adapters/extractor/readability.ts` — `ReadabilityExtractor`
+  - `@mozilla/readability` + `linkedom` (`parseHTML`) — always runs first, free
+  - Install `@mozilla/readability`, `linkedom`
+- `apps/server/src/services/adapters/extractor/tavily-extract.ts` — `TavilyExtractor`
+  - ONLY as fallback when Readability fails AND `TAVILY_API_KEY` is set
+  - Tavily Extract API (1 credit / 5 URLs)
+- If all extractors fail → discard article (log warning, don't store)
+- research: `@mozilla/readability linkedom` usage, `tavily extract api`
 
-### 2.9 — Content extraction service
-`[SPEC §ADR-007]` · depends: #2.1
+### 2.9 — Ingestion orchestrator (uses adapter chain)
+`[PIPELINE §Chain Pattern]` · depends: #2.7, #2.8, #2.10
 
-- `apps/server/src/services/extractor.ts`
-- `ContentExtractor` interface + `buildExtractorChain()` factory
-- `ReadabilityExtractor` — `@mozilla/readability` + `linkedom` (90% smaller than jsdom, proven Readability compat)
-- `TavilyExtractor` — Tavily Extract API fallback
-- Chain tries extractors in order, returns first success
-- Install `@mozilla/readability`, `linkedom`
-- research: `@mozilla/readability linkedom` usage, `parseHTML` from linkedom
+- `apps/server/src/services/ingestion.ts` — orchestrates: build adapters from registry → fetch all sources (parallel) → dedup → extract content (chain) → store
+- Uses `buildSourceAdapters()` for Stage 1, `buildExtractorChain()` + `extractContent()` for Stage 2
+- Wire into cron job and manual trigger endpoint
 
 ### 2.10 — Deduplication service
 `[SPEC §ADR-008]` · depends: #1.7
@@ -240,10 +246,9 @@ depends: #1.5
 - Compare against articles from last 48 hours
 - Install `fast-dice-coefficient`
 
-### 2.11 — Ingestion orchestrator + cron scheduling
-`[SPEC §3 Data Flow, §ADR-006]` · depends: #2.6, #2.7, #2.8, #2.9, #2.10
+### 2.11 — Cron scheduling
+`[SPEC §ADR-006]` · depends: #2.9
 
-- `apps/server/src/services/ingestion.ts` — orchestrates: fetch all sources → dedup → extract content → store
 - `apps/server/src/services/cron.ts` — croner setup, calls ingestion on schedule
 - Install `croner`
 - Wire into server startup

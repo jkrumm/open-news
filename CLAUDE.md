@@ -5,6 +5,7 @@ AI-powered news aggregator. Single Docker container, provider-agnostic LLM, self
 ## Specification
 
 - `docs/SPEC.md` — Full technical spec (PRD, ADRs, schema, API design, infra). Read on demand when implementing tasks.
+- `docs/PIPELINE.md` — Pipeline architecture: 3-stage model, adapter interfaces, extraction chain, registry, extension guide.
 - `docs/IMPLEMENTATION.md` — 28 tasks across 5 phases with task-level dependencies
 
 ## Tech Stack
@@ -44,6 +45,9 @@ These are the most mistake-prone rules. Violating any of these will cause build 
 11. **LLM config** — ENV-only for MVP. Settings UI override is post-MVP P1.
 12. **Exports** — Named exports only, no default exports. Function components, no `React.FC`.
 13. **Routing** — TanStack Router file-based routing. Vite plugin `tanstackRouter()` MUST come before `react()` in plugins array. Routes use `createFileRoute`, params are type-safe (e.g., `/article/$topicId`).
+14. **Pipeline adapters** — `SourceAdapter` + `ContentExtractor` are the core interfaces. Types live in `packages/shared`, implementations in `apps/server/src/services/adapters/`. See `docs/PIPELINE.md`.
+15. **Adapter file structure** — `services/adapters/source/` (Stage 1), `services/adapters/extractor/` (Stage 2), `services/adapters/registry.ts` (builder functions).
+16. **Mastra tools wrap adapters** — Stage 3 research tools are thin wrappers around Stage 1/2 adapter instances. No duplicated fetch/extraction logic.
 
 ## Monorepo Structure
 
