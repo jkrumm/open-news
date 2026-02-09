@@ -6,9 +6,9 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
   plugins: [
-    TanStackRouterVite(), // MUST come before react() plugin
-    react(),
+    TanStackRouterVite(),
     tailwindcss(),
+    react(),
   ],
   resolve: {
     alias: {
