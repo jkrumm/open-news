@@ -1,5 +1,5 @@
 // SQLite schema for OpenNews
-// Full schema from SPEC.md §4 Data Model
+// Full schema from ARCHITECTURE.md §Data Model
 
 import { index, integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 

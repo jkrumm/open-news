@@ -42,8 +42,12 @@ open-news/
 ├── packages/
 │   └── shared/          # Domain types, Zod schemas, Pino logger
 ├── docs/
-│   ├── SPEC.md          # Full technical specification (PRD, ADRs, API design)
-│   └── IMPLEMENTATION.md # 28 tasks across 5 phases
+│   ├── PRD.md            # Product requirements (vision, scope, roadmap)
+│   ├── ARCHITECTURE.md   # System design (schema, API, frontend, infra)
+│   ├── DECISIONS.md      # Architecture decision records (ADRs)
+│   ├── PIPELINE.md       # Pipeline architecture (adapters, extraction)
+│   ├── AI_STACK.md       # AI architecture (agents, prompts, streaming)
+│   └── TASKS.md          # 28 implementation tasks across 5 phases
 ├── scripts/
 │   ├── ralph-mvp.sh     # One-shot autonomous implementation script
 │   └── ralph-status.sh  # Progress monitoring
@@ -109,7 +113,7 @@ For initial implementation, use the RALPH (Reasoning And Learning Planning Helpe
 ```
 
 The script:
-- Implements all 28 tasks from `docs/IMPLEMENTATION.md`
+- Implements all 28 tasks from `docs/TASKS.md`
 - Runs autonomously within each of 5 phases
 - Pauses for human review after each phase
 - Creates atomic commits per task
@@ -121,8 +125,12 @@ See [scripts/README.md](scripts/README.md) for details.
 
 | File | Purpose |
 |------|---------|
-| [docs/SPEC.md](docs/SPEC.md) | Full technical specification (PRD, ADRs, schema, API design, infra) |
-| [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md) | 28 tasks across 5 phases with dependencies |
+| [docs/PRD.md](docs/PRD.md) | Product requirements (vision, scope, roadmap, costs) |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design (schema, API, frontend, infra) |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | Architecture decision records (ADR-001 to ADR-009) |
+| [docs/PIPELINE.md](docs/PIPELINE.md) | Pipeline architecture (adapters, extraction chain) |
+| [docs/AI_STACK.md](docs/AI_STACK.md) | AI architecture (agents, prompts, compression, streaming) |
+| [docs/TASKS.md](docs/TASKS.md) | 28 implementation tasks across 5 phases |
 | [CLAUDE.md](CLAUDE.md) | AI assistant instructions and critical architecture decisions |
 | [scripts/README.md](scripts/README.md) | RALPH automation script documentation |
 

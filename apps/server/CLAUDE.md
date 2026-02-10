@@ -16,7 +16,7 @@ Hono backend with Mastra AI, Drizzle ORM, and structured Pino logging. Runs on B
 src/
 ├── index.ts            # Server entry point, middleware stack, static serving
 ├── config.ts           # Zod-validated env config, exported AppConfig
-├── model.ts            # LLM model factory: createModel('fast' | 'pro')
+├── model.ts            # LLM model factory: createModel() (single model MVP)
 ├── routes/
 │   ├── auth.ts         # Login, check, logout + auth middleware
 │   ├── feed.ts         # GET /api/v1/feed (cursor pagination)
@@ -34,15 +34,14 @@ src/
 │   ├── hackernews.ts   # HN API client
 │   ├── tavily.ts       # Tavily search client
 │   ├── extractor.ts    # ContentExtractor chain (readability → tavily)
-│   ├── dedup.ts        # URL normalization + Dice coefficient
+│   ├── dedup.ts        # URL normalization + Dice coefficient + ranking
+│   ├── headline.ts     # Headline generation (AI SDK generateObject)
+│   ├── digest.ts       # Daily digest service (plain async function)
 │   └── cron.ts         # croner scheduling
 └── mastra/
-    ├── index.ts        # Mastra instance (agents + workflows)
+    ├── index.ts        # Mastra instance (Article Agent only)
     ├── agents/
-    │   ├── headline-agent.ts   # Groups articles, generates headlines
-    │   └── article-agent.ts    # Deep-dive article generation
-    ├── workflows/
-    │   └── daily-digest.ts     # Daily aggregation workflow
+    │   └── article-agent.ts    # Deep-dive article generation with streaming
     └── tools/
         ├── tavily-search.ts    # Tavily search as Mastra tool
         ├── tavily-extract.ts   # Tavily extract as Mastra tool

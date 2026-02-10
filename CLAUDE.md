@@ -4,9 +4,12 @@ AI-powered news aggregator. Single Docker container, provider-agnostic LLM, self
 
 ## Specification
 
-- `docs/SPEC.md` — Full technical spec (PRD, ADRs, schema, API design, infra). Read on demand when implementing tasks.
+- `docs/PRD.md` — Product requirements: vision, user flows, MVP scope, cost analysis, post-MVP roadmap.
+- `docs/ARCHITECTURE.md` — System design: monorepo structure, data model, API design, frontend, infrastructure.
+- `docs/DECISIONS.md` — Architecture decision records (ADR-001 through ADR-009) + decision log.
 - `docs/PIPELINE.md` — Pipeline architecture: 3-stage model, adapter interfaces, extraction chain, registry, extension guide.
-- `docs/IMPLEMENTATION.md` — 28 tasks across 5 phases with task-level dependencies
+- `docs/AI_STACK.md` — AI-specific architecture: agents, prompts, compression, streaming, tool matrix.
+- `docs/TASKS.md` — 28 implementation tasks across 5 phases with task-level dependencies.
 
 ## Tech Stack
 
@@ -57,6 +60,37 @@ apps/web/        # React SPA (Vite) + TanStack Query + streamdown
 packages/shared/ # Domain types, Zod schemas, Pino logger factory
 ```
 
+## BasaltUI Development
+
+**Published version:** `basalt-ui@^0.2.1` (includes `font-display: block` fix for Astro)
+
+**Local development workflow:**
+
+```bash
+# Switch to local basalt-ui for development
+cd apps/web
+# Edit package.json: "basalt-ui": "link:basalt-ui"
+bun install
+
+# Register basalt-ui link (one-time, if not already linked)
+cd ../../../basalt-ui/packages/basalt-ui
+bun link
+
+# Back to open-news
+cd -
+bun link basalt-ui
+
+# When done, switch back to published version
+# Edit package.json: "basalt-ui": "^0.2.1"
+bun install
+```
+
+**Key fixes in 0.2.1:**
+- Custom `@font-face` with `font-display: block` (prevents flickering in Astro MPAs)
+- Comprehensive character set support (Latin, Latin-Ext, Cyrillic, Greek, Vietnamese)
+- Fixed peer dependencies (`@tailwindcss/typography`, `shadcn`, `tw-animate-css`)
+- Added `"style"` export condition for Tailwind v4 Vite plugin
+
 ## Commands
 
 ```bash
@@ -77,7 +111,7 @@ Inherited from SourceRoot: `/commit`, `/pr`, `/release`, `/fix-sentry`, `/upgrad
 
 | Skill | Purpose | Context |
 |-------|---------|---------|
-| `/docs` | Sync docs (SPEC, IMPL, CLAUDE, README) with code changes | main |
+| `/docs` | Sync docs (ARCH, DECISIONS, TASKS, CLAUDE, README) with code changes | main |
 | `/mastra` | Mastra v1 API patterns and examples | fork |
 | `/hono` | Hono framework patterns | fork |
 | `/tanstack-query` | TanStack Query patterns | fork |
@@ -86,7 +120,7 @@ Inherited from SourceRoot: `/commit`, `/pr`, `/release`, `/fix-sentry`, `/upgrad
 
 ## Implementation Workflow
 
-1. Pick next unblocked task from `docs/IMPLEMENTATION.md`
+1. Pick next unblocked task from `docs/TASKS.md`
 2. `/research` if touching unfamiliar libraries
 3. Implement (read existing code first, build on patterns)
 4. `/docs` — sync any spec/doc drift from implementation

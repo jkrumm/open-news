@@ -6,7 +6,7 @@ One-shot autonomous implementation script for OpenNews MVP with human-in-the-loo
 
 ### Purpose
 
-Automates the initial implementation of OpenNews following the 28 tasks across 5 phases defined in `docs/IMPLEMENTATION.md`. This script is designed for **one-time use** during initial development and includes human review checkpoints after each major phase.
+Automates the initial implementation of OpenNews following the 28 tasks across 5 phases defined in `docs/TASKS.md`. This script is designed for **one-time use** during initial development and includes human review checkpoints after each major phase.
 
 ### How It Works
 
@@ -134,7 +134,7 @@ Shows:
 
 **API timeout:**
 - Increase `CLAUDE_TIMEOUT` if tasks are complex
-- Split large tasks in IMPLEMENTATION.md
+- Split large tasks in TASKS.md
 
 **Script interrupted:**
 - Resume with `--resume` flag

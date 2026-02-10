@@ -1,7 +1,7 @@
 # OpenNews - Pipeline Architecture
 
 > Core news pipeline: source discovery, content extraction, and research tools.
-> For system architecture, API design, and infrastructure, see [`SPEC.md`](./SPEC.md).
+> For system architecture, API design, and infrastructure, see [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 ---
 
@@ -18,8 +18,8 @@ Scheduled (daily cron)             On-demand per article               On-demand
 Adapters:                          Adapters (chain/fallback):          Mastra tools wrapping Stage 1+2:
 ├── RssSourceAdapter               ├── ReadabilityExtractor (free)     ├── tavily-search tool
 ├── HackerNewsSourceAdapter        ├── TavilyExtractor (paid)          ├── fetch-content tool
-├── TavilySearchSourceAdapter      ├── FirecrawlExtractor (post-MVP)   └── tavily-extract tool
-├── ExaSourceAdapter (post-MVP)    └── Crawl4AIExtractor (post-MVP)
+├── TavilySearchSourceAdapter      └── FirecrawlExtractor (post-MVP)   └── tavily-extract tool
+├── ExaSourceAdapter (post-MVP)
 └── ...more post-MVP
 ```
 
@@ -42,9 +42,10 @@ Runs on a daily cron schedule. Each adapter implements `SourceAdapter` and retur
 | `TavilySearchSourceAdapter` | Tavily Search API | Free tier (1K credits/mo) | `TAVILY_API_KEY` | Topic-based discovery. Finds articles RSS might miss. |
 
 **Post-MVP adapters**:
-- `ExaSourceAdapter` — Neural/embedding search. Good complement to Tavily for semantic discovery.
-- `GNewsSourceAdapter` — 100 req/day free, non-commercial license.
-- `SerperSourceAdapter` — Google SERP results.
+- `ExaSourceAdapter` — Neural/embedding search. Good complement to Tavily for semantic discovery. (P1)
+- `RedditSourceAdapter` — Subreddit monitoring (r/programming, r/technology, custom). No API key needed (Reddit RSS). (P1)
+- `GNewsSourceAdapter` — 100 req/day free, non-commercial license. (P2)
+- `SerperSourceAdapter` — Google SERP results. (P2)
 
 **Not a SourceAdapter**: Perplexity returns LLM-synthesized answers + citations, not raw URLs. It's an answer engine useful for Stage 3 research, not Stage 1 URL discovery.
 
@@ -61,7 +62,6 @@ Runs on-demand during ingestion (for articles where RSS only provides a snippet)
 
 **Post-MVP extractors**:
 - `FirecrawlExtractor` — Self-hosted via `FIRECRAWL_URL`. Handles JS-rendered sites without Tavily credits.
-- `Crawl4AIExtractor` — Deferred. Python-first, no official JS SDK, awkward async polling model.
 
 ### Stage 3: Research Tools
 
@@ -175,6 +175,14 @@ The extraction chain is the critical path for content quality. Getting this wron
 2. **TavilyExtractor is a paid fallback only**. It is _never_ called when Readability succeeds.
 3. **If all extractors fail, discard the article**. Log a warning with the URL and continue. Don't store articles without content — they provide no value to the headline or article agents.
 4. **Chain order is fixed, not configurable**. Free/fast extractors always come before paid ones. Users can only enable/disable paid extractors via env vars.
+
+### Validation Rules
+
+Applied after extraction, before storing. See [`AI_STACK.md`](./AI_STACK.md) §3 Stage 3.
+
+1. **Minimum content length**: 100 characters. Discard empty or stub extractions.
+2. **Non-empty title**: Must have a non-empty title (from extraction or original RSS title).
+3. **Logging**: Log extraction success/failure rates per adapter for monitoring extraction chain health.
 
 ### Post-MVP Chain
 
@@ -309,10 +317,12 @@ Each adapter has its own environment variable(s). No single `CRAWLER_URL` — di
                        │ merged DiscoveredArticle[]
                        ▼
 ┌─────────────────────────────────────────────────────────┐
-│  2. DEDUPLICATION                                        │
+│  2. DEDUPLICATION + RANKING                              │
 │  ├── URL normalization (strip utm_*, ref, fbclid, etc.) │
 │  ├── Title similarity (Dice coefficient > 0.7)          │
-│  └── Filter already-seen articles (last 48h in DB)      │
+│  ├── Filter already-seen articles (last 48h in DB)      │
+│  └── Multi-source score: sum(1/(pos+1) * adapterWeight) │
+│      RSS=1.0, HN=1.2, Tavily=0.8                       │
 └──────────────────────┬──────────────────────────────────┘
                        │ unique DiscoveredArticle[]
                        ▼
@@ -331,7 +341,7 @@ Each adapter has its own environment variable(s). No single `CRAWLER_URL` — di
                        │
                        ▼
 ┌─────────────────────────────────────────────────────────┐
-│  5. HEADLINE AGENT (Mastra, structured output)           │
+│  5. HEADLINE GENERATION (AI SDK generateObject())        │
 │  ├── Groups articles by topic/story                     │
 │  ├── Assigns relevance scores per user interests        │
 │  ├── Generates personalized headline + summary          │
@@ -358,13 +368,28 @@ User clicks headline
                    │
                    ▼
 ┌──────────────────────────────────────────────────────────┐
-│  Article Agent (Mastra, streaming)                        │
+│  Phase A: GATHER (Mastra Article Agent + tools)           │
 │  ├── Input: topic, source articles, user preferences     │
 │  ├── Tools available (Stage 3):                          │
 │  │   ├── tavily-search → find more articles on topic     │
 │  │   ├── fetch-content → extract full text (uses chain)  │
 │  │   └── tavily-extract → get JS-heavy page content      │
-│  ├── Generates comprehensive article in markdown         │
+│  └── Result: array of source texts                       │
+└──────────────────┬───────────────────────────────────────┘
+                   │
+                   ▼
+┌──────────────────────────────────────────────────────────┐
+│  Phase B: COMPRESS (AI SDK generateObject(), parallel)    │
+│  ├── Per-source compression: key facts verbatim          │
+│  ├── Assign [N] citation numbers                         │
+│  └── Result: CompressedSource[] with citations           │
+└──────────────────┬───────────────────────────────────────┘
+                   │
+                   ▼
+┌──────────────────────────────────────────────────────────┐
+│  Phase C: SYNTHESIZE (Article Agent, streaming)           │
+│  ├── Combines compressed sources into article            │
+│  ├── Inline [N] citations, ## headings                   │
 │  └── Streams tokens to client via SSE                    │
 └──────────────────┬───────────────────────────────────────┘
                    │
@@ -437,7 +462,7 @@ Analysis of an external research document's recommendations vs our spec decision
    ```
 3. Add the source type to `SOURCE_TYPES` in `packages/shared/src/types.ts`
 4. Add env var (if needed) and register in `buildSourceAdapters()` in `registry.ts`
-5. Add env var documentation to `docs/SPEC.md` section 8
+5. Add env var documentation to `docs/ARCHITECTURE.md` §Infrastructure
 
 ### Adding a New Content Extractor
 
@@ -455,7 +480,7 @@ Analysis of an external research document's recommendations vs our spec decision
    }
    ```
 3. Add to `buildExtractorChain()` in `registry.ts` — respect chain order (free before paid)
-4. Add env var documentation to `docs/SPEC.md` section 8
+4. Add env var documentation to `docs/ARCHITECTURE.md` §Infrastructure
 
 ### Adding a New Research Tool (Stage 3)
 

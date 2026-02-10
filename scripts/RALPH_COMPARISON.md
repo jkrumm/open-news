@@ -46,8 +46,12 @@ openspec/changes/<change-name>/
 ```bash
 # Implementation-driven structure
 docs/
-├── SPEC.md               # Technical spec
-└── IMPLEMENTATION.md     # Source of truth (28 tasks, 5 phases)
+├── PRD.md                # Product requirements
+├── ARCHITECTURE.md       # System design
+├── DECISIONS.md          # ADRs + decision log
+├── PIPELINE.md           # Pipeline architecture
+├── AI_STACK.md           # AI architecture
+└── TASKS.md              # Source of truth (28 tasks, 5 phases)
 
 .ralph-logs/
 ├── state.json            # Phase + task state
@@ -345,8 +349,8 @@ show_progress() {
 ### OpenNews Implementation Prompt (as designed)
 
 **Key elements:**
-1. **Context Files**: IMPLEMENTATION.md, SPEC.md, CLAUDE.md
-2. **Task Details**: From IMPLEMENTATION.md
+1. **Context Files**: TASKS.md, ARCHITECTURE.md, DECISIONS.md, CLAUDE.md
+2. **Task Details**: From TASKS.md
 3. **Instructions**:
    - Read task description
    - Understand dependencies

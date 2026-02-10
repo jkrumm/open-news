@@ -10,7 +10,7 @@ set -euo pipefail
 # Usage: ./scripts/ralph-mvp.sh [--phase N] [--resume]
 #
 # Features:
-# - Phase-based execution (5 phases from IMPLEMENTATION.md)
+# - Phase-based execution (5 phases from TASKS.md)
 # - Human checkpoint after each phase for review/approval
 # - Fresh Claude context per task (prevents drift)
 # - Comprehensive logging + safety checks
@@ -35,7 +35,7 @@ readonly TASK_COMPLETE="RALPH_TASK_COMPLETE"
 readonly TASK_BLOCKED="RALPH_TASK_BLOCKED"
 
 # Paths
-readonly IMPL_FILE="docs/IMPLEMENTATION.md"
+readonly IMPL_FILE="docs/TASKS.md"
 readonly LOGS_DIR=".ralph-logs"
 readonly STATE_FILE="${LOGS_DIR}/state.json"
 readonly REPORT_FILE="${LOGS_DIR}/RALPH_REPORT.md"
@@ -52,7 +52,7 @@ readonly FORBIDDEN_COMMANDS=(
   "npm add"
 )
 
-# Phase definitions (auto-detected from IMPLEMENTATION.md)
+# Phase definitions (auto-detected from TASKS.md)
 typeset -A PHASE_NAMES
 typeset -A PHASE_TASK_RANGES
 
@@ -238,7 +238,7 @@ run_claude() {
   return 1
 }
 
-# Auto-detect phase structure from IMPLEMENTATION.md
+# Auto-detect phase structure from TASKS.md
 detect_phases() {
   log "Auto-detecting phase structure from ${IMPL_FILE}..."
 
@@ -298,7 +298,7 @@ detect_phases() {
   return 0
 }
 
-# Parse tasks from IMPLEMENTATION.md for a phase
+# Parse tasks from TASKS.md for a phase
 parse_phase_tasks() {
   local phase=$1
   local range=${PHASE_TASK_RANGES[$phase]}
@@ -312,7 +312,7 @@ parse_phase_tasks() {
 
   # Extract tasks using Claude
   local parse_prompt=$(cat <<EOF
-Parse ALL tasks from Phase ${phase} in docs/IMPLEMENTATION.md.
+Parse ALL tasks from Phase ${phase} in docs/TASKS.md.
 
 IMPORTANT: Phase ${phase} contains tasks with IDs from ${start_task} to ${end_task} (inclusive).
 Extract EVERY task in this range - do not stop early.
@@ -336,7 +336,7 @@ Output a JSON array with this exact structure:
   }
 ]
 
-Read docs/IMPLEMENTATION.md and output ONLY the JSON array, no other text.
+Read docs/TASKS.md and output ONLY the JSON array, no other text.
 Ensure you extract ALL tasks from ${start_task} through ${end_task}.
 EOF
 )
@@ -411,16 +411,16 @@ implement_task() {
 
   # Build implementation prompt
   local impl_prompt=$(cat <<EOF
-Implement task ${task_id} from docs/IMPLEMENTATION.md: "${task_title}"
+Implement task ${task_id} from docs/TASKS.md: "${task_title}"
 
 CONTEXT:
-- Read docs/IMPLEMENTATION.md for full task details
-- Read docs/SPEC.md for architecture and design decisions
+- Read docs/TASKS.md for full task details
+- Read docs/ARCHITECTURE.md and docs/DECISIONS.md for architecture and design decisions
 - Read CLAUDE.md for project-specific conventions
 - Check existing code in apps/server, apps/web, packages/shared
 
 INSTRUCTIONS:
-1. Read the full task description from IMPLEMENTATION.md
+1. Read the full task description from TASKS.md
 2. Understand dependencies and acceptance criteria
 3. Implement the task following project conventions
 4. Run /code-quality to validate changes
@@ -640,7 +640,7 @@ main() {
   # Initialize state
   init_state
 
-  # Auto-detect phase structure from IMPLEMENTATION.md
+  # Auto-detect phase structure from TASKS.md
   if ! detect_phases; then
     log_error "Failed to detect phases from ${IMPL_FILE}"
     exit 1

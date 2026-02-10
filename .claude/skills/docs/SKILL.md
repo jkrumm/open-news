@@ -1,6 +1,6 @@
 ---
 name: docs
-description: Sync documentation with code changes. Audits git diff and updates SPEC.md, IMPLEMENTATION.md, CLAUDE.md, and README.md to reflect current implementation.
+description: Sync documentation with code changes. Audits git diff and updates ARCHITECTURE.md, DECISIONS.md, TASKS.md, CLAUDE.md, and README.md to reflect current implementation.
 user_invocable: true
 ---
 
@@ -16,31 +16,34 @@ Run `git diff --name-only HEAD` (or `git diff --name-only` for unstaged changes)
 
 | Changed Files | Docs to Check |
 |--------------|---------------|
-| `apps/server/src/db/schema.ts` | SPEC.md §4 (Data Model) |
-| `apps/server/src/routes/*` | SPEC.md §5 (API Design) |
-| `apps/server/src/mastra/*` | SPEC.md §6 (Mastra Configuration) |
-| `apps/web/src/*` | SPEC.md §7 (Frontend Design) |
-| `package.json`, `bun.lock` | SPEC.md §9 (Dependencies) |
-| `Dockerfile`, `docker-compose.yml` | SPEC.md §8 (Infrastructure) |
-| `biome.json`, `tsconfig.json` | SPEC.md §8 (Infrastructure) |
-| `.github/workflows/*` | SPEC.md §8 (CI/CD) |
+| `apps/server/src/db/schema.ts` | ARCHITECTURE.md §Data Model |
+| `apps/server/src/routes/*` | ARCHITECTURE.md §API Design |
+| `apps/server/src/mastra/*` | AI_STACK.md |
+| `apps/web/src/*` | ARCHITECTURE.md §Frontend Design |
+| `package.json`, `bun.lock` | ARCHITECTURE.md §Dependencies |
+| `Dockerfile`, `docker-compose.yml` | ARCHITECTURE.md §Infrastructure |
+| `biome.json`, `tsconfig.json` | ARCHITECTURE.md §Infrastructure |
+| `.github/workflows/*` | ARCHITECTURE.md §Infrastructure |
 | Any `apps/server/src/*` | `apps/server/CLAUDE.md` patterns |
 | Any `apps/web/src/*` | `apps/web/CLAUDE.md` patterns |
-| Any new env vars | README.md, SPEC.md §8 (Env Vars) |
+| Any new env vars | README.md, ARCHITECTURE.md §Infrastructure |
 | Any new scripts in package.json | Root CLAUDE.md commands section |
 
 ### 2. Check Each Document
 
 For each affected document:
 
-**`docs/SPEC.md`** — Does the spec still match the implementation?
-- Schema changes → update §4 code blocks
-- New/changed API routes → update §5 endpoint list
-- Dependency additions/removals → update §9 dependency lists
-- New ADRs or changed decisions → update §2 or §14 Decision Log
+**`docs/ARCHITECTURE.md`** — Does the architecture still match the implementation?
+- Schema changes → update §Data Model code blocks
+- New/changed API routes → update §API Design endpoint list
+- Dependency additions/removals → update §Dependencies
 - Only update sections where implementation **deviated from** or **refined** the spec
 
-**`docs/IMPLEMENTATION.md`** — Should tasks be marked complete?
+**`docs/DECISIONS.md`** — Any new or changed decisions?
+- New ADRs or changed decisions → update ADR section or Decision Log table
+- Only add entries when a decision was actually made or revisited
+
+**`docs/TASKS.md`** — Should tasks be marked complete?
 - Check off completed tasks: `- [ ]` → `- [x]`
 - If implementation revealed new sub-tasks, add them
 - Update task descriptions if approach changed
@@ -70,8 +73,8 @@ After checking all docs, report:
 ## /docs Sync Report
 
 ### Updated
-- docs/SPEC.md §4: Updated schema to reflect [change]
-- docs/IMPLEMENTATION.md: Checked off task 1.5
+- docs/ARCHITECTURE.md §Data Model: Updated schema to reflect [change]
+- docs/TASKS.md: Checked off task 1.5
 
 ### Already in Sync
 - CLAUDE.md: No changes needed

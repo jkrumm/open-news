@@ -1,7 +1,7 @@
-# OpenNews - Implementation Plan
+# OpenNews - Implementation Tasks
 
 > Task breakdown for iterative implementation with Claude Code.
-> Each task is self-contained and references the relevant SPEC.md sections.
+> Each task is self-contained and references the relevant doc sections.
 
 ## Workflow Per Task
 
@@ -10,7 +10,8 @@
 3. Review surrounding code before writing — maybe use /explore skill from Claude Code
 4. Implement
 5. Keep docs in sync — if the implementation deviates from or refines the plan:
-   - `docs/SPEC.md` — update ADRs, schemas, API design, or dependency lists
+   - `docs/ARCHITECTURE.md` — update schema, API design, or dependency lists
+   - `docs/DECISIONS.md` — update ADRs or decision log
    - `CLAUDE.md` — update project conventions, scripts, architecture notes
    - `README.md` — update setup instructions, env vars, or usage docs
 6. `/code-quality` → `/commit`
@@ -18,7 +19,10 @@
 
 ## Notation
 
-- `[SPEC §N]` = Reference to SPEC.md section number
+- `[ARCH §N]` = Reference to ARCHITECTURE.md section number
+- `[DECISIONS §N]` = Reference to DECISIONS.md ADR number
+- `[AI_STACK §N]` = Reference to AI_STACK.md section number
+- `[PIPELINE §N]` = Reference to PIPELINE.md section
 - `depends: #N` = Must complete task N first
 - `research:` = Libraries/APIs to look up before starting
 
@@ -27,7 +31,7 @@
 ## Phase 1: Project Scaffold
 
 ### 1.1 — Initialize monorepo and workspace structure
-`[SPEC §3 Monorepo Structure]`
+`[ARCH §1 Monorepo Structure]`
 
 - Initialize root `package.json` with Bun workspaces (`apps/*`, `packages/*`)
 - Create directory structure: `apps/server/`, `apps/web/`, `packages/shared/`
@@ -38,7 +42,7 @@
 - research: `bun workspaces` configuration
 
 ### 1.2 — Configure TypeScript with project references
-`[SPEC §3]` · depends: #1.1
+`[ARCH §1]` · depends: #1.1
 
 - Root `tsconfig.json` with project references to all three packages
 - `packages/shared/tsconfig.json` — strict, composite, declaration
@@ -48,7 +52,7 @@
 - research: `typescript project references monorepo`
 
 ### 1.3 — Configure Biome
-`[SPEC §3]` · depends: #1.1
+`[ARCH §1]` · depends: #1.1
 
 - Root `biome.json` with formatting + linting rules
 - Add `check` and `check:fix` scripts to root `package.json`
@@ -56,7 +60,7 @@
 - research: `biome configuration` (Context7)
 
 ### 1.4 — Set up shared package with types, schema, and logger
-`[SPEC §4 Data Model, §ADR-009]` · depends: #1.2
+`[ARCH §2 Data Model] [DECISIONS §ADR-009]` · depends: #1.2
 
 - `packages/shared/src/types.ts` — domain types: `SourceType`, `TopicType`, `NewsStyle`, API request/response types
 - `packages/shared/src/schema.ts` — Zod schemas for API validation (settings, sources, auth)
@@ -71,7 +75,7 @@
 - research: `pino logger setup` (Context7), `pino-pretty`
 
 ### 1.5 — Set up Hono server with health endpoint + structured logging
-`[SPEC §3, §5 API Design, §ADR-009]` · depends: #1.4
+`[ARCH §1, §3 API Design] [DECISIONS §ADR-009]` · depends: #1.4
 
 - Install `hono`, `hono-pino` in `apps/server`
 - `apps/server/src/index.ts` — Hono app with `pinoLogger` middleware + `/api/health` endpoint
@@ -83,7 +87,7 @@
 - research: `hono bun setup` (Context7), `hono-pino` middleware
 
 ### 1.6 — Set up Vite + React + Tailwind
-`[SPEC §ADR-005, §8 Frontend]` · depends: #1.2
+`[DECISIONS §ADR-005] [ARCH §4 Frontend]` · depends: #1.2
 
 - Install React 19, Vite, Tailwind v4, TanStack Router in `apps/web`
 - Packages: `@tanstack/react-router`, `@tanstack/router-plugin` (Vite plugin), `@tanstack/react-router-devtools`, `zod`
@@ -103,7 +107,7 @@
 - research: `tailwind css v4 setup vite` (Context7), `TanStack Router vite setup` (Context7)
 
 ### 1.7 — Set up Drizzle ORM + SQLite schema
-`[SPEC §4 Data Model, §ADR-004]` · depends: #1.4
+`[ARCH §2 Data Model] [DECISIONS §ADR-004]` · depends: #1.4
 
 - Install `drizzle-orm`, `drizzle-kit` in `apps/server`
 - `apps/server/src/db/schema.ts` — full schema from SPEC (settings, sources, rawArticles, dailyTopics, tags, topicTags, topicSources, generatedArticles) with indexes
@@ -113,7 +117,7 @@
 - research: `drizzle-orm bun:sqlite` (Context7)
 
 ### 1.8 — ShadCN/ui + BasaltUI theme setup
-`[SPEC §8 Key Libraries]` · depends: #1.6
+`[ARCH §4 Key Libraries]` · depends: #1.6
 
 - Install ShadCN with `bunx --bun shadcn@latest init`
 - Configure BasaltUI theme (import CSS from `@basalt-ui`)
@@ -122,7 +126,7 @@
 - research: `shadcn ui vite react` setup, BasaltUI CSS
 
 ### 1.9 — Dockerfile + docker-compose.yml
-`[SPEC §9 Docker Configuration]` · depends: #1.5, #1.6
+`[ARCH §5 Docker Configuration]` · depends: #1.5, #1.6
 
 - Multi-stage Dockerfile: install → build web → build server → runtime
 - `docker-compose.yml` with volume mount for `/app/data`
@@ -132,7 +136,7 @@
 - research: `bun dockerfile production` best practices
 
 ### 1.10 — GitHub Actions CI (lint + typecheck only)
-`[SPEC §9 CI/CD]` · depends: #1.3
+`[ARCH §5 CI/CD]` · depends: #1.3
 
 - `.github/workflows/ci.yml` — biome check + tsc -b + commitlint
 - `commitlint.config.js` — conventional commits validation config
@@ -151,7 +155,7 @@ depends: #1.5
 ## Phase 2: Backend Core
 
 ### 2.1 — Environment config validation
-`[SPEC §9 Environment Variables, §ADR-002 Config]` · depends: #1.7
+`[ARCH §5 Environment Variables] [DECISIONS §ADR-002 Config]` · depends: #1.7
 
 - `apps/server/src/config.ts` — Zod schema for all env vars (required + optional)
 - Load and validate at startup, fail fast with clear error messages
@@ -159,7 +163,7 @@ depends: #1.5
 - Support defaults (PORT=3000, TIMEZONE=UTC, etc.)
 
 ### 2.2 — Auth middleware (dual-mode)
-`[SPEC §5 Authentication]` · depends: #2.1
+`[ARCH §3 Authentication]` · depends: #2.1
 
 - `apps/server/src/routes/auth.ts` — login, check, logout endpoints
 - `apps/server/src/middleware/auth.ts` — cookie + bearer token middleware
@@ -169,7 +173,7 @@ depends: #1.5
 - research: `hono cookie middleware`, `hono jwt`
 
 ### 2.3 — Settings CRUD
-`[SPEC §5 REST Endpoints]` · depends: #2.2, #1.7
+`[ARCH §3 REST Endpoints]` · depends: #2.2, #1.7
 
 - `apps/server/src/routes/settings.ts` — GET + PUT `/api/v1/settings`
 - Single-row pattern: upsert on PUT
@@ -177,20 +181,20 @@ depends: #1.5
 - Return typed response
 
 ### 2.4 — Sources CRUD
-`[SPEC §5 REST Endpoints]` · depends: #2.2, #1.7
+`[ARCH §3 REST Endpoints]` · depends: #2.2, #1.7
 
 - `apps/server/src/routes/sources.ts` — full CRUD for `/api/v1/sources`
 - Validate URL format, source type
 - Seed default RSS feeds on first startup (if sources table empty)
-- research: default feeds list from `[SPEC §11]`
+- research: default feeds list from `[PRD §5]`
 
 ### 2.5 — LLM model factory
-`[SPEC §ADR-002, §6]` · depends: #2.1
+`[DECISIONS §ADR-002]` `[AI_STACK §2]` · depends: #2.1
 
-- `apps/server/src/model.ts` — `createModel(tier: 'fast' | 'pro')` function
+- `apps/server/src/model.ts` — `createModel()` function (single model for MVP)
 - Install AI SDK packages: `ai`, `@ai-sdk/google`, `@ai-sdk/openai`, `@ai-sdk/anthropic`
 - Provider switch based on `LLM_PROVIDER` env var
-- Tier resolution: `LLM_MODEL_FAST` → `LLM_MODEL` fallback, `LLM_MODEL_PRO` → `LLM_MODEL` fallback
+- Single model via `LLM_MODEL` env var (post-MVP P1: add `tier: 'fast' | 'pro'` parameter with `LLM_MODEL_FAST` / `LLM_MODEL_PRO` fallbacks)
 - research: `vercel ai sdk provider setup` (Context7)
 
 ### 2.6 — Adapter interfaces + registry
@@ -237,17 +241,19 @@ depends: #1.5
 - Uses `buildSourceAdapters()` for Stage 1, `buildExtractorChain()` + `extractContent()` for Stage 2
 - Wire into cron job and manual trigger endpoint
 
-### 2.10 — Deduplication service
-`[SPEC §ADR-008]` · depends: #1.7
+### 2.10 — Deduplication + ranking service
+`[DECISIONS §ADR-008]` `[AI_STACK §3 Stage 2]` · depends: #1.7
 
 - `apps/server/src/services/dedup.ts`
 - URL normalization: strip tracking params, normalize www/protocol/trailing slash
 - Title similarity: Dice coefficient via `fast-dice-coefficient` (the `string-similarity` package is abandoned)
 - Compare against articles from last 48 hours
+- Multi-source ranking: `score = sum(1/(position+1) * adapterWeight)` where RSS=1.0, HN=1.2, Tavily=0.8
+- Merge strategy: when same article found via multiple sources, keep longest extraction, preserve all source URLs
 - Install `fast-dice-coefficient`
 
 ### 2.11 — Cron scheduling
-`[SPEC §ADR-006]` · depends: #2.9
+`[DECISIONS §ADR-006]` · depends: #2.9
 
 - `apps/server/src/services/cron.ts` — croner setup, calls ingestion on schedule
 - Install `croner`
@@ -257,7 +263,7 @@ depends: #1.5
 - research: `croner` API
 
 ### 2.12 — Feed query endpoint + tags endpoint
-`[SPEC §5 REST Endpoints]` · depends: #1.7
+`[ARCH §3 REST Endpoints]` · depends: #1.7
 
 - `apps/server/src/routes/feed.ts` — `GET /api/v1/feed` with cursor-based pagination
   - Query `daily_topics` joined with tags and source counts
@@ -272,7 +278,7 @@ depends: #1.5
 ## Phase 3: AI Pipeline
 
 ### 3.1 — Mastra instance setup
-`[SPEC §6 Mastra Configuration]` · depends: #2.5
+`[AI_STACK §6 Mastra Configuration]` · depends: #2.5
 
 - Install `@mastra/core`
 - `apps/server/src/mastra/index.ts` — Mastra instance with agents and workflows
@@ -281,7 +287,7 @@ depends: #1.5
 - research: `@mastra/core` v1 setup (Context7)
 
 ### 3.2 — Mastra tools (Tavily + content fetch)
-`[SPEC §6 Tools]` · depends: #3.1, #2.9
+`[AI_STACK §6 Tools]` · depends: #3.1, #2.9
 
 - `apps/server/src/mastra/tools/tavily-search.ts` — Tavily search as Mastra tool
 - `apps/server/src/mastra/tools/tavily-extract.ts` — Tavily extract as Mastra tool
@@ -290,38 +296,39 @@ depends: #1.5
 - Add `inputSchema` + `outputSchema` (Zod) to each tool
 - research: `mastra createTool` v1 API (Context7)
 
-### 3.3 — Headline Agent
-`[SPEC §6 Headline Agent]` · depends: #3.1
+### 3.3 — Headline generation service
+`[AI_STACK §6 Headline Generation]` `[AI_STACK §3 Stage 4]` · depends: #2.5
 
-- `apps/server/src/mastra/agents/headline-agent.ts`
-- `Agent` from `@mastra/core/agent`, uses `createModel('fast')`
-- Structured JSON output via `agent.generate(prompt, { structuredOutput: { schema } })`
-- Define Zod output schema: groups, headlines, summaries, scores, tags, topicType
-- Access typed result via `response.object`
-- research: `mastra agent structured output` v1 (Context7)
+- `apps/server/src/services/headline.ts` — NOT a Mastra agent, uses AI SDK directly
+- AI SDK `generateObject()` with Zod schema (one-shot, no tools needed)
+- Define Zod output schema: topics with headlines, summaries, scores, tags, topicType, articleIndices; discarded indices
+- Uses `createModel()` (single model for MVP)
+- research: `vercel ai sdk generateObject` (Context7)
 
-### 3.4 — Daily Digest Workflow
-`[SPEC §6 Daily Digest Workflow]` · depends: #3.2, #3.3, #2.11
+### 3.4 — Daily Digest Service
+`[AI_STACK §6 Daily Digest Service]` `[AI_STACK §6 Workflow 1]` · depends: #2.9, #3.3, #2.11
 
-- `apps/server/src/mastra/workflows/daily-digest.ts`
-- v1 API: `createWorkflow`/`createStep` from `@mastra/core/workflows`
-- Steps chained via `.then()`, finalized with `.commit()`
-- Each step has typed `inputSchema`/`outputSchema` (Zod), `execute` receives `{ inputData, mastra }`
-- Steps: fetchSources → dedup → extract → storeRaw → generateHeadlines → storeTopics
-- Wire workflow into cron job and manual trigger endpoint
-- Execution: `workflow.createRun()` then `run.start({ inputData: { date } })`
-- research: `mastra createWorkflow createStep` v1 (Context7)
+- `apps/server/src/services/digest.ts` — plain async function, NOT a Mastra workflow
+- Sequential steps: fetchAllSources → deduplicateArticles → extractContent → storeRawArticles → generateHeadlines → storeTopics
+- Each step is deterministic except headline generation (AI SDK `generateObject()`)
+- Wire into cron job and manual trigger endpoint (`POST /api/v1/admin/trigger-digest`)
+- No `@mastra/core/workflows` dependency for this task
 
 ### 3.5 — Article Agent + SSE streaming
-`[SPEC §6 Article Agent, §5 SSE Streaming]` · depends: #3.2
+`[AI_STACK §6 Article Agent] [ARCH §3 SSE Streaming]` `[AI_STACK §3 Stage 5, §6 Workflow 2]` · depends: #3.2
 
 - `apps/server/src/mastra/agents/article-agent.ts`
-- `Agent` from `@mastra/core/agent`, uses `createModel('pro')`, has access to all 3 tools
+- `Agent` from `@mastra/core/agent`, uses `createModel()` (single model for MVP), has access to all 3 tools
+- Three-phase architecture in route handler:
+  1. Phase A (Gather): Get topic sources, agent can optionally call tools for more
+  2. Phase B (Compress): Per-source compression via `generateObject()` in parallel — extract key facts verbatim, assign `[N]` citations
+  3. Phase C (Synthesize): `agent.stream(buildSynthesisPrompt(topic, compressed, settings))` with `[N]` citation format
 - `apps/server/src/routes/article.ts` — endpoints:
   - `GET /api/v1/article/:topicId` — return cached or 404
   - `POST /api/v1/article/:topicId/generate` — SSE stream via `agent.stream()` + `toDataStreamResponse()`
   - `DELETE /api/v1/article/:topicId/cache` — invalidate cache
 - Cache completed article to `generated_articles` table after stream completes
+- Token overflow handling: truncate compressed sources by 10%, retry up to 3x, last resort reduce source count
 - research: `mastra agent stream toDataStreamResponse` v1 (Context7)
 
 ---
@@ -329,7 +336,7 @@ depends: #1.5
 ## Phase 4: Frontend
 
 ### 4.1 — API client + auth state
-`[SPEC §8 Hooks, §5 Auth]` · depends: #2.2, #1.6
+`[ARCH §4 Hooks, §3 Auth]` · depends: #2.2, #1.6
 
 - `apps/web/src/lib/api.ts` — fetch wrapper with cookie auth, error handling
 - `apps/web/src/hooks/use-auth.ts` — login, logout, auth check
@@ -339,7 +346,7 @@ depends: #1.5
 - Install `@tanstack/react-query`
 
 ### 4.2 — Settings page
-`[SPEC §8 Settings Page]` · depends: #4.1, #2.3
+`[ARCH §4 Settings Page]` · depends: #4.1, #2.3
 
 - `apps/web/src/routes/Settings.tsx`
 - `apps/web/src/components/SettingsForm.tsx` — profile fields, news style, language, topics
@@ -348,7 +355,7 @@ depends: #1.5
 - Form validation with shared Zod schemas
 
 ### 4.3 — Feed page
-`[SPEC §8 Feed Page]` · depends: #4.1, #3.4, #2.12
+`[ARCH §4 Feed Page]` · depends: #4.1, #3.4, #2.12
 
 - `apps/web/src/routes/Feed.tsx` — daily feed layout
 - `apps/web/src/components/DaySection.tsx` — date header + topic cards
@@ -360,7 +367,7 @@ depends: #1.5
 - `useInfiniteQuery` for loading more days on scroll
 
 ### 4.4 — Article page (streaming markdown)
-`[SPEC §8 Article Page, §5 SSE]` · depends: #4.1, #3.5
+`[ARCH §4 Article Page, §3 SSE]` · depends: #4.1, #3.5
 
 - `apps/web/src/routes/Article.tsx` — article view with streaming
 - `apps/web/src/components/ArticleView.tsx` — markdown renderer using `streamdown`
@@ -383,7 +390,7 @@ depends: #4.2, #4.3, #4.4
 ## Phase 5: Polish + Ship
 
 ### 5.1 — Sentry integration + Pino bridge
-`[SPEC §Decision Log #5, §ADR-009]` · depends: #2.1, #4.1
+`[DECISIONS §Decision Log #5, §ADR-009]` · depends: #2.1, #4.1
 
 - Install `@sentry/bun` (server) + `@sentry/react` (web)
 - Initialize only if `SENTRY_DSN` env var is set (no-op otherwise)
@@ -401,14 +408,14 @@ depends: #4.3, #4.4
 - Empty states (no topics yet, no settings configured)
 
 ### 5.3 — Onboarding flow + seed data
-`[SPEC §11 Default RSS Feeds]` · depends: #2.4
+`[PRD §5 Default RSS Feeds]` · depends: #2.4
 
-- On first startup: seed default RSS feeds from SPEC §11
+- On first startup: seed default RSS feeds from PRD §5
 - Settings page: detect empty profile, show onboarding prompt
 - First-run UX: guide user through profile + LLM config + trigger first digest
 
 ### 5.4 — Admin status page
-`[SPEC §5 Admin Endpoints]` · depends: #2.11
+`[ARCH §3 Admin Endpoints]` · depends: #2.11
 
 - `GET /api/v1/admin/status` — last digest time, article count, source count, next scheduled run
 - Display on settings page or dedicated admin section
